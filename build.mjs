@@ -270,7 +270,7 @@ ${hasList ? sheetMarkup() : ''}
 function colRow(c, { active, compact = false } = {}) {
   const sub = !!c.parentCol;
   const isActive = active === c.id;
-  return `<a class="crow${sub ? ' crow--sub' : ''}${isActive ? ' is-active' : ''}" href="${href(`col/${c.id}/`)}" data-col="${esc(c.id)}"${isActive ? ' aria-current="page"' : ''}>
+  return `<a class="crow${sub ? ' crow--sub' : ''}${isActive ? ' is-active' : ''}" href="${href(`col/${c.id}/`)}" data-col="${esc(c.id)}"${sub ? ` data-parent="${esc(c.parentCol.id)}"` : ''}${isActive ? ' aria-current="page"' : ''}>
 <span class="crow-num">${c.num}</span><span class="crow-name">${esc(c.name)}</span><span class="crow-count">${c.cards.length}</span>
 </a>`;
 }
@@ -283,6 +283,7 @@ function sidebar(model, active) {
 <a class="crow${all ? ' is-active' : ''}" href="${href()}"${all ? ' aria-current="page"' : ''}><span class="crow-num">—</span><span class="crow-name">Все карточки</span><span class="crow-count">${model.cards.length}</span></a>
 ${model.ordered.map((c) => colRow(c, { active })).join('\n')}
 </nav>
+<div class="col-admin" data-admin hidden><button class="link-btn" type="button" data-new-col>+ Новая коллекция</button></div>
 </aside>`;
 }
 
@@ -359,6 +360,7 @@ ${config.description ? `<p class="lede">${esc(config.description)}</p>` : ''}
 <section class="index-inline" aria-labelledby="index-label">
 <div class="bar"><h2 class="bar-label" id="index-label">Коллекции</h2><span>${String(model.tops.length).padStart(2, '0')}</span></div>
 <nav>${index}</nav>
+<div class="col-admin" data-admin hidden><button class="link-btn" type="button" data-new-col>+ Новая коллекция</button></div>
 </section>
 ${cardList(model.cards, model, { label: 'Все карточки' })}`;
   return layout({ title: '', description: config.description || '', body, model, active: '', hasList: true, bodyClass: 'page-home' });
@@ -381,10 +383,11 @@ ${c.children.map((k) => `<button class="chip" type="button" data-filter="${esc(k
 <p class="crumbs">${crumbs}</p>
 <div class="title-row">
 <h1 class="hero-title" data-title-text data-col-name="${esc(c.id)}">${esc(c.name)}</h1>
-<button class="icon-btn" type="button" data-rename="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Переименовать коллекцию">${icon.pencil}</button>
+<button class="icon-btn" type="button" data-rename="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Изменить название и описание коллекции">${icon.pencil}</button>
 </div>
-${c.description ? `<p class="lede">${esc(c.description)}</p>` : ''}
+<p class="lede" data-col-desc="${esc(c.id)}"${c.description ? '' : ' hidden'}>${esc(c.description)}</p>
 <p class="meta">${esc(meta)}</p>
+${parent ? '' : `<div class="col-admin col-admin--hero" data-admin hidden><button class="link-btn" type="button" data-new-col data-parent="${esc(c.id)}">+ Подколлекция</button></div>`}
 </section>
 ${cardList(c.cards, model, { label: 'Карточки', chips })}`;
   return layout({

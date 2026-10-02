@@ -525,3 +525,61 @@ body.sheet-open .sheet { transform: none; }
 .rename-save { min-height: 44px; padding: 0 18px; background: var(--ink); color: var(--bg); font-size: 15px; }
 .rename-save:disabled { opacity: 0.45; }
 .rename-cancel { min-height: 44px; font-size: 14px; text-decoration: underline; text-underline-offset: 4px; }
+
+/* ───────── Новые коллекции и правка описания ───────── */
+
+.col-admin { padding: 8px var(--pad) 0; }
+.col-admin--hero { padding: 0; }
+.rename-text {
+  width: 100%;
+  min-height: 112px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.rename-text:focus, .mini-input:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+.rename-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+.mini-form {
+  margin: 8px 0 16px;
+  padding: 16px;
+  border: 1px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mini-form .field { display: flex; flex-direction: column; gap: 6px; }
+.mini-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  appearance: none;
+}
+textarea.mini-input { min-height: 88px; padding: 10px 12px; line-height: 1.5; resize: vertical; }
+
+.crow--pending .crow-name { color: var(--mute); }
+.crow--pending .crow-count { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.col-admin .link-btn {
+  min-height: 44px;
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}

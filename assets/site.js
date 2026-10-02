@@ -58,7 +58,8 @@
   const renames = readRenames();
   store.set(RENAMES_STORE, JSON.stringify(renames));
 
-  function applyRename(kind, id, name, root = document) {
+  function applyRename(kind, id, entry, root = document) {
+    const name = entry.name;
     if (kind === 'card') {
       $$(`a.tile[data-id="${CSS.escape(String(id))}"] .tile-title`, root).forEach((el) => { el.textContent = name; });
       $$(`article.card[data-id="${CSS.escape(String(id))}"]`, root).forEach((a) => {
@@ -69,12 +70,18 @@
     } else {
       $$(`[data-col="${CSS.escape(id)}"] .crow-name`, root).forEach((el) => { el.textContent = name; });
       $$(`[data-col-name="${CSS.escape(id)}"]`, root).forEach((el) => { el.textContent = name; });
+      if (typeof entry.description === 'string') {
+        $$(`[data-col-desc="${CSS.escape(id)}"]`, root).forEach((el) => {
+          el.textContent = entry.description;
+          el.hidden = !entry.description;
+        });
+      }
     }
   }
   function applyAllRenames(root = document) {
     for (const k in renames) {
       const i = k.indexOf(':');
-      applyRename(k.slice(0, i), k.slice(i + 1), renames[k].name, root);
+      applyRename(k.slice(0, i), k.slice(i + 1), renames[k], root);
     }
   }
   applyAllRenames();
@@ -271,7 +278,24 @@
     const btns = document.createElement('div');
     btns.className = 'rename-btns';
     btns.innerHTML = '<button class="rename-save" type="submit">Сохранить</button><button class="rename-cancel" type="button">Отмена</button>';
-    form.append(label, input, btns);
+    let textarea = null;
+    const lede = kind === 'collection' ? $(`[data-col-desc="${CSS.escape(id)}"]`) : null;
+    if (lede) {
+      const dl = document.createElement('label');
+      dl.className = 'rename-label';
+      dl.textContent = 'Описание';
+      textarea = document.createElement('textarea');
+      textarea.className = 'rename-text';
+      textarea.id = input.id + '-desc';
+      textarea.maxLength = 4000;
+      textarea.value = lede.textContent.trim();
+      dl.htmlFor = textarea.id;
+      form.append(label, input, dl, textarea, btns);
+      lede.dataset.wasHidden = lede.hidden ? '1' : '';
+      lede.hidden = true;
+    } else {
+      form.append(label, input, btns);
+    }
 
     heading.hidden = true;
     btn.hidden = true;
@@ -281,6 +305,7 @@
 
     const finish = () => {
       form.remove();
+      if (lede) lede.hidden = !lede.textContent.trim();
       heading.hidden = false;
       btn.hidden = false;
       btn.focus({ preventScroll: true });
@@ -293,17 +318,148 @@
       ev.preventDefault();
       const name = input.value.trim();
       if (!name) { say('Название не может быть пустым'); return; }
-      if (name === old) { finish(); return; }
+      const description = textarea ? textarea.value.trim() : undefined;
+      if (name === old && (!textarea || description === lede.textContent.trim())) { finish(); return; }
       const save = $('.rename-save', form);
       save.disabled = true;
       try {
         if (kind === 'card') await api('renameCard', { id: Number(id), title: name });
-        else await api('renameCollection', { id, name });
-        renames[`${kind}:${id}`] = { name, ts: Date.now() };
+        else await api('updateCollection', { id, name, description });
+        const entry = { name, ts: Date.now() };
+        if (textarea) entry.description = description;
+        renames[`${kind}:${id}`] = entry;
         store.set(RENAMES_STORE, JSON.stringify(renames));
-        applyRename(kind, id, name);
+        applyRename(kind, id, entry);
         finish();
-        say('Переименовано. Сайт обновится через 1–2 минуты');
+        say('Сохранено. Сайт обновится через 1–2 минуты');
+      } catch (err) {
+        save.disabled = false;
+        say(err.message);
+      }
+    });
+  });
+
+  // ───────── Новые коллекции ─────────
+  const NEWCOLS_STORE = 'library:newcols';
+  function readNewCols() {
+    try {
+      const d = JSON.parse(store.get(NEWCOLS_STORE) || '{}');
+      const now = Date.now();
+      for (const id in d) {
+        const real = document.querySelector(`a.crow[data-col="${CSS.escape(id)}"]`);
+        if (real || now - d[id].ts > 15 * 60 * 1000) delete d[id];
+      }
+      return d;
+    } catch { return {}; }
+  }
+  const newCols = readNewCols();
+  store.set(NEWCOLS_STORE, JSON.stringify(newCols));
+
+  function addPendingRow(nav, id, c) {
+    if ($(`[data-col="${CSS.escape(id)}"]`, nav)) return;
+    const row = document.createElement('div');
+    row.className = 'crow crow--pending' + (c.parent ? ' crow--sub' : '');
+    row.dataset.col = id;
+    if (c.parent) row.dataset.parent = c.parent;
+    let num;
+    if (c.parent) {
+      const parentRow = $(`[data-col="${CSS.escape(c.parent)}"]`, nav);
+      if (!parentRow) return;
+      const kids = $$(`[data-parent="${CSS.escape(c.parent)}"]`, nav);
+      num = $('.crow-num', parentRow).textContent + '.' + (kids.length + 1);
+      (kids[kids.length - 1] || parentRow).after(row);
+    } else {
+      num = String($$('[data-col]:not(.crow--sub)', nav).length + 1).padStart(2, '0');
+      nav.append(row);
+    }
+    row.innerHTML = '<span class="crow-num"></span><span class="crow-name"></span><span class="crow-count">скоро</span>';
+    $('.crow-num', row).textContent = num;
+    $('.crow-name', row).textContent = c.name;
+    row.title = 'Страница коллекции появится после обновления сайта';
+    const empty = $('.empty', nav);
+    if (empty) empty.remove();
+  }
+  function renderNewCols() {
+    for (const nav of $$('.side nav, .index-inline nav')) {
+      for (const id in newCols) if (!newCols[id].parent) addPendingRow(nav, id, newCols[id]);
+      for (const id in newCols) if (newCols[id].parent) addPendingRow(nav, id, newCols[id]);
+    }
+  }
+  renderNewCols();
+
+  function topCollections() {
+    return $$('.side nav [data-col]:not(.crow--sub)').map((r) => ({
+      id: r.dataset.col,
+      label: `${$('.crow-num', r).textContent} ${$('.crow-name', r).textContent}`,
+    }));
+  }
+
+  function field(labelText, control) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    const label = document.createElement('label');
+    label.className = 'rename-label';
+    label.textContent = labelText;
+    control.id = 'nc-' + Math.random().toString(36).slice(2);
+    label.htmlFor = control.id;
+    wrap.append(label, control);
+    return wrap;
+  }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-new-col]');
+    if (!btn || !adminKey) return;
+    const holder = btn.parentElement;
+    if ($('.mini-form', holder)) return;
+    const fixedParent = btn.dataset.parent || '';
+
+    const form = document.createElement('form');
+    form.className = 'mini-form';
+    const name = document.createElement('input');
+    name.className = 'mini-input';
+    name.type = 'text';
+    name.maxLength = 120;
+    name.required = true;
+    const desc = document.createElement('textarea');
+    desc.className = 'mini-input';
+    desc.maxLength = 4000;
+    form.append(field(fixedParent ? 'Название подколлекции' : 'Название', name), field('Описание (необязательно)', desc));
+
+    let parentSelect = null;
+    if (!fixedParent) {
+      parentSelect = document.createElement('select');
+      parentSelect.className = 'mini-input';
+      parentSelect.add(new Option('Нет, верхний уровень', ''));
+      topCollections().forEach((c) => parentSelect.add(new Option(c.label, c.id)));
+      form.append(field('Внутри коллекции', parentSelect));
+    }
+
+    const btns = document.createElement('div');
+    btns.className = 'rename-btns';
+    btns.innerHTML = '<button class="rename-save" type="submit">Создать</button><button class="rename-cancel" type="button">Отмена</button>';
+    form.append(btns);
+
+    btn.hidden = true;
+    holder.append(form);
+    name.focus();
+
+    const finish = () => { form.remove(); btn.hidden = false; };
+    $('.rename-cancel', form).addEventListener('click', finish);
+    form.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(); } });
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const n = name.value.trim();
+      if (!n) { say('Добавь название'); name.focus(); return; }
+      const parent = fixedParent || (parentSelect ? parentSelect.value : '');
+      const save = $('.rename-save', form);
+      save.disabled = true;
+      try {
+        const r = await api('createCollection', { name: n, description: desc.value.trim(), parent });
+        newCols[r.collection.id] = { name: n, parent, ts: Date.now() };
+        store.set(NEWCOLS_STORE, JSON.stringify(newCols));
+        renderNewCols();
+        finish();
+        say(parent ? 'Подколлекция создана. Её страница появится через 1–2 минуты' : 'Коллекция создана. Её страница появится через 1–2 минуты');
       } catch (err) {
         save.disabled = false;
         say(err.message);
