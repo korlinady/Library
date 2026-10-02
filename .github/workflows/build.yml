@@ -35,6 +35,11 @@ jobs:
           key: images-${{ github.run_id }}
           restore-keys: images-
 
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: modules-${{ runner.os }}-${{ hashFiles('package.json') }}
+
       - run: npm install --no-audit --no-fund
 
       - run: node build.mjs
