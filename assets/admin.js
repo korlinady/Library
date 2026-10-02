@@ -18,6 +18,8 @@
   const nid = () => 'f' + Date.now().toString(36) + (uid++);
 
   let key = store.get(KEY_STORE);
+  const EDIT_ID = Number(new URLSearchParams(location.search).get('edit')) || 0;
+  let original = null; // карточка до правок, в режиме редактирования
   let collections = [];
   let state = emptyState();
 
@@ -97,7 +99,7 @@
     show('loading');
     try {
       await loadCollections();
-      restoreDraft();
+      if (EDIT_ID) await loadCard(); else restoreDraft();
       renderAll();
       show('form');
     } catch (err) {
@@ -120,7 +122,7 @@
       await loadCollections();
       store.set(KEY_STORE, key);
       input.value = '';
-      restoreDraft();
+      if (EDIT_ID) await loadCard(); else restoreDraft();
       renderAll();
       show('form');
     } catch (ex) {
@@ -154,6 +156,7 @@
 
   let draftTimer;
   function saveDraft() {
+    if (EDIT_ID) return;
     clearTimeout(draftTimer);
     draftTimer = setTimeout(() => {
       const keep = (f) => f && (f.kind === 'drive' || f.status === 'done');
@@ -192,6 +195,39 @@
       saveDraft();
     });
   });
+
+  // ───────── Редактирование ─────────
+
+  const driveImg = (id, w) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w${w}`;
+
+  async function loadCard() {
+    const r = await api('getCard', { id: EDIT_ID });
+    const c = r.card;
+    original = c;
+    state = Object.assign(emptyState(), {
+      title: c.title,
+      description: c.description,
+      link: c.link,
+      tags: (c.tags || []).join(', '),
+      star: !!c.star,
+      hidden: !!c.hidden,
+      cols: (c.collections || []).filter((id) => collections.some((x) => x.id === id)),
+      cover: c.cover ? { id: nid(), kind: 'existing', fileId: c.cover, status: 'done', name: 'Обложка', thumb: driveImg(c.cover, 480) } : null,
+      files: (c.files || []).map((f) => ({
+        id: nid(), kind: 'existing', fileId: f.driveId, name: f.title, title: f.title,
+        size: f.size, type: f.type, status: 'done', drive: f.kind === 'drive',
+      })),
+    });
+    $$('[data-field]').forEach((el) => {
+      const k = el.dataset.field;
+      if (el.type === 'checkbox') el.checked = !!state[k];
+      else el.value = state[k] || '';
+    });
+    const label = `Карточка № ${pad3(c.id)}`;
+    $('[data-admin-title]').textContent = label;
+    document.title = `${label} — правка`;
+    $('[data-publish-hint]').textContent = state.hidden ? 'Карточка скрыта — изменения видны сразу' : 'Изменения появятся на сайте через 1–2 минуты';
+  }
 
   // ───────── Коллекции ─────────
 
@@ -464,6 +500,7 @@
     $('[data-cover-preview]').src = c.thumb || '';
     const status = c.status === 'uploading' ? 'Загружается…'
       : c.status === 'error' ? 'Не загрузилась'
+      : c.kind === 'existing' ? 'Текущая обложка'
       : `Готово · ${fmtSize(c.size)}`;
     $('[data-cover-status]').textContent = status;
   }
@@ -525,6 +562,13 @@
         state.keepOriginal = false;
         $('[data-field="keepOriginal"]').checked = false;
       }
+    } else if (e.target.closest('[data-file-rename]')) {
+      const next = window.prompt('Название файла', item.title || item.name);
+      if (next === null) return;
+      const t = next.trim();
+      if (!t) return;
+      item.title = t;
+      item.name = t;
     } else if (e.target.closest('[data-retry]') && item._blob) {
       enqueue(item, item._blob);
     } else if (e.target.closest('[data-as-cover]') && item._file) {
@@ -541,9 +585,10 @@
     $('[data-files]').innerHTML = state.files.map((f) => {
       const stateText = f.status === 'uploading' ? 'Загрузка…'
         : f.status === 'error' ? 'Ошибка'
-        : f.kind === 'drive' ? 'Drive ↗'
+        : f.kind === 'drive' || f.drive ? 'Drive ↗'
         : fmtSize(f.size);
       const actions = [
+        f.status !== 'uploading' ? '<button class="link-btn" type="button" data-file-rename>Переименовать</button>' : '',
         f.status === 'error' && f._blob ? '<button class="link-btn" type="button" data-retry>Повторить</button>' : '',
         f.isImage && f._file && f.status !== 'error' ? '<button class="link-btn" type="button" data-as-cover>Сделать обложкой</button>' : '',
       ].filter(Boolean).join('');
@@ -564,7 +609,7 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
     if (btn.dataset.busy) return;
     const wait = pending();
     btn.disabled = wait;
-    btn.textContent = wait ? 'Загружаем файлы…' : 'Опубликовать';
+    btn.textContent = wait ? 'Загружаем файлы…' : (EDIT_ID ? 'Сохранить' : 'Опубликовать');
   }
 
   function renderAll() {
@@ -593,7 +638,7 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
 
     btn.dataset.busy = '1';
     btn.disabled = true;
-    btn.textContent = 'Публикуем…';
+    btn.textContent = EDIT_ID ? 'Сохраняем…' : 'Публикуем…';
     try {
       if (!state.cover) {
         const img = state.files.find((f) => f.isImage && f._file);
@@ -602,7 +647,24 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
       await waitUploads();
       if (state.cover && state.cover.status !== 'done') throw new Error('Обложка не загрузилась. Убери её или выбери заново.');
 
-      const r = await api('createCard', {
+      const filesPayload = state.files.map((f) => f.kind === 'existing'
+        ? { kind: 'existing', driveId: f.fileId, title: f.title || '' }
+        : f.kind === 'drive'
+          ? { kind: 'drive', url: f.url, title: f.title || '' }
+          : { kind: 'upload', fileId: f.fileId, title: f.title || '' });
+      const r = EDIT_ID ? await api('updateCard', {
+        id: EDIT_ID,
+        title: state.title.trim(),
+        description: state.description,
+        link: state.link.trim(),
+        tags: state.tags,
+        star: state.star,
+        hidden: state.hidden,
+        collections: state.cols,
+        coverFileId: state.cover && state.cover.kind === 'upload' ? state.cover.fileId : '',
+        removeCover: !state.cover && !!(original && original.cover),
+        files: filesPayload,
+      }) : await api('createCard', {
         title: state.title.trim(),
         description: state.description,
         link: state.link.trim(),
@@ -611,14 +673,25 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
         hidden: state.hidden,
         collections: state.cols,
         coverFileId: state.cover ? state.cover.fileId : '',
-        files: state.files.map((f) => f.kind === 'drive'
-          ? { kind: 'drive', url: f.url, title: f.title || '' }
-          : { kind: 'upload', fileId: f.fileId, title: '' }),
+        files: filesPayload,
       });
 
       const num = pad3(r.card.id);
       const link = `${BASE}c/${num}/`;
-      $('[data-done-text]').textContent = (state.hidden
+      if (EDIT_ID) {
+        // Сбрасываем быстрые переименования на сайте и кэш скрытых: они устарели
+        try {
+          const ren = JSON.parse(store.get('library:renames') || '{}');
+          delete ren['card:' + r.card.id];
+          store.set('library:renames', JSON.stringify(ren));
+          sessionStorage.removeItem('library:hidden-cache');
+        } catch {}
+        $('[data-done-title]').textContent = 'Сохранено';
+      }
+      $('[data-done-text]').textContent = EDIT_ID
+        ? (state.hidden ? `Карточка № ${num} скрыта, изменения уже видны тебе.` : `Изменения в карточке № ${num} появятся на сайте через 1–2 минуты.`) +
+          (r.warnings && r.warnings.length ? ` Обрати внимание: ${r.warnings.join('; ')}.` : '')
+        : (state.hidden
         ? `Карточка № ${num} сохранена как скрытая: её видишь только ты, на устройствах, где введён ключ.`
         : `Карточка № ${num} появится на сайте через 1–2 минуты.`) +
         (r.warnings && r.warnings.length ? ` Обрати внимание: ${r.warnings.join('; ')}.` : '');
@@ -636,7 +709,10 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
     }
   });
 
-  $('[data-done-again]').addEventListener('click', () => show('form'));
+  $('[data-done-again]').addEventListener('click', () => {
+    if (EDIT_ID) location.href = `${BASE}admin/`;
+    else show('form');
+  });
 
   window.addEventListener('beforeunload', (e) => {
     if (pending()) { e.preventDefault(); e.returnValue = ''; }

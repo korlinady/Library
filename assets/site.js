@@ -57,6 +57,7 @@
     eyeOff: svg('<path d="M3 3l18 18M10.6 5.1A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.4 6.4C3.7 8.2 2 12 2 12s3.5 7 10 7c1.9 0 3.5-.5 4.9-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
     eyeOffSmall: svg('<path d="M3 3l18 18M10.6 5.1A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.4 6.4C3.7 8.2 2 12 2 12s3.5 7 10 7c1.9 0 3.5-.5 4.9-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/>', 14),
     pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/>'),
+    edit: svg('<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>'),
     trash: svg('<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5"/>'),
     link: svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
     close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
@@ -126,6 +127,20 @@
   const deleted = freshStore('library:deleted');
   const renames = freshStore('library:renames');
   const newCols = freshStore('library:newcols', (id) => !!$(`a.crow[data-col="${sel(id)}"]`));
+  const deletedCols = freshStore('library:deletedcols', (id) => !$(`a.crow[data-col="${sel(id)}"]:not([data-client])`));
+  function hideDeletedCols() {
+    for (const id in deletedCols) {
+      $$(`[data-col="${sel(id)}"]`).forEach((r) => r.remove());
+      $$(`[data-filter="${sel(id)}"]`).forEach((c) => c.remove());
+    }
+  }
+
+  // Сообщение, переданное через переход на другую страницу
+  try {
+    const flash = sessionStorage.getItem('library:flash');
+    if (flash) { sessionStorage.removeItem('library:flash'); setTimeout(() => say(flash), 300); }
+  } catch {}
+
   // Только что открытые для всех: видны админу, пока сайт не пересоберётся
   const transit = freshStore('library:transit', (key) => {
     const [kind, id] = key.split(':');
@@ -380,7 +395,7 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
     return list;
   }
   function clientCols() {
-    const list = hidden.collections.map((c) => Object.assign({}, c, { _priv: true }));
+    const list = hidden.collections.filter((c) => !deletedCols[c.id]).map((c) => Object.assign({}, c, { _priv: true }));
     for (const k in transit) {
       if (k.startsWith('col:') && !list.some((c) => c.id === k.slice(4))) {
         list.push(Object.assign({}, transit[k].data, { _priv: false }));
@@ -537,6 +552,7 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
 
   function renderPrivate() {
     renderNavs();
+    hideDeletedCols();
     applyAllRenames();
     renderTiles();
     updateVisibilityUI();
@@ -545,6 +561,9 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
   async function fetchHidden() {
     const data = await api('listHidden');
     hidden = { collections: data.collections || [], cards: data.cards || [], memberships: data.memberships || {} };
+    saveHiddenCache();
+  }
+  function saveHiddenCache() {
     try { sessionStorage.setItem(HIDDEN_CACHE, JSON.stringify({ ts: Date.now(), hidden })); } catch {}
   }
 
@@ -687,6 +706,34 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       say(err.message);
     } finally {
       btn.disabled = false;
+    }
+  });
+
+  // ═════════ Удаление коллекции ═════════
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-delete-col]');
+    if (!btn || !adminKey) return;
+    const id = btn.dataset.id;
+    const info = colInfo(id);
+    const kids = childIds(id);
+    const isSub = !!(info && info.parent);
+    const name = info ? info.name : id;
+    const inner = kids.length ? ` и ${kids.length} ${plural(kids.length, 'подколлекцию', 'подколлекции', 'подколлекций')} внутри неё` : '';
+    const ok = window.confirm(`Удалить ${isSub ? 'подколлекцию' : 'коллекцию'} «${name}»${inner}?\n\nКарточки не удалятся: они останутся во «Всех карточках» и в других своих коллекциях. Карточки, которые были скрыты вместе с этой коллекцией, так и останутся скрытыми.`);
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      const r = await api('deleteCollection', { id });
+      (r.deleted || [id]).forEach((x) => { deletedCols[x] = { ts: Date.now() }; });
+      saveStore('library:deletedcols', deletedCols);
+      hidden.collections = hidden.collections.filter((c) => !(r.deleted || [id]).includes(c.id));
+      saveHiddenCache();
+      try { sessionStorage.setItem('library:flash', `${isSub ? 'Подколлекция удалена' : 'Коллекция удалена'}. Сайт обновится через 1–2 минуты`); } catch {}
+      location.href = isSub ? `${BASE}col/${encodeURIComponent(info.parent)}/` : BASE;
+    } catch (err) {
+      btn.disabled = false;
+      say(err.message);
     }
   });
 
@@ -932,6 +979,8 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       applyAllRenames(article);
       num.textContent = '№ ' + (article.dataset.num || '');
       copyBtn.dataset.copy = url;
+      const editLink = $('[data-edit]', sheet);
+      if (editLink) editLink.href = `${BASE}admin/?edit=${article.dataset.id}`;
       document.title = data.title;
       updateVisibilityUI();
 
@@ -1037,6 +1086,7 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
 <div class="card-bar">
 <span class="card-bar-num">№ ${pad3(c.id)}</span>
 <div class="card-bar-actions">
+<a class="icon-btn" href="${BASE}admin/?edit=${c.id}" data-edit data-admin hidden aria-label="Редактировать карточку">${ICON.edit}</a>
 <button class="icon-btn" type="button" data-visibility="card" data-admin hidden aria-label="Скрыть от всех">${ICON.eyeOff}</button>
 <button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${ICON.trash}</button>
 <button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${ICON.link}</button>
@@ -1082,6 +1132,7 @@ ${articleHTML(c)}
 <div class="title-actions">
 <button class="icon-btn" type="button" data-visibility="collection" data-id="${esc(id)}" data-admin hidden aria-label="Показать всем">${ICON.eye}</button>
 <button class="icon-btn" type="button" data-rename="collection" data-id="${esc(id)}" data-admin hidden aria-label="Изменить название и описание коллекции">${ICON.pencil}</button>
+<button class="icon-btn" type="button" data-delete-col data-id="${esc(id)}" data-admin hidden aria-label="Удалить коллекцию">${ICON.trash}</button>
 </div>
 </div>
 <p class="lede" data-col-desc="${esc(id)}"${col.description ? '' : ' hidden'}>${esc(col.description || '')}</p>
@@ -1104,6 +1155,7 @@ ${cardListHTML(cards, 'Карточки')}`;
 
   applyAllRenames();
   renderNavs();
+  hideDeletedCols();
   applyAll();
   privateReady = loadPrivate();
   renderNotFound();

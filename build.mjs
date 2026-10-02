@@ -213,6 +213,7 @@ const icon = {
   trash: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5"/></svg>',
   pencil: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/></svg>',
   eye: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  edit: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/></svg>',
   ext: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"/></svg>',
 };
 
@@ -295,6 +296,7 @@ function sheetMarkup() {
 <div class="card-bar" data-drag>
 <span class="card-bar-num" data-sheet-num></span>
 <div class="card-bar-actions">
+<a class="icon-btn" href="${href('admin/')}" data-edit data-admin hidden aria-label="Редактировать карточку">${icon.edit}</a>
 <button class="icon-btn" type="button" data-visibility="card" data-admin hidden aria-label="Скрыть от всех">${icon.eye}</button>
 <button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${icon.trash}</button>
 <button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${icon.link}</button>
@@ -388,6 +390,7 @@ ${c.children.map((k) => `<button class="chip" type="button" data-filter="${esc(k
 <div class="title-actions">
 <button class="icon-btn" type="button" data-visibility="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Скрыть от всех">${icon.eye}</button>
 <button class="icon-btn" type="button" data-rename="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Изменить название и описание коллекции">${icon.pencil}</button>
+<button class="icon-btn" type="button" data-delete-col data-id="${esc(c.id)}" data-admin hidden aria-label="Удалить коллекцию">${icon.trash}</button>
 </div>
 </div>
 <p class="lede" data-col-desc="${esc(c.id)}"${c.description ? '' : ' hidden'}>${esc(c.description)}</p>
@@ -450,6 +453,7 @@ function cardPage(card, model) {
 <div class="card-bar">
 <span class="card-bar-num">№ ${card.num}</span>
 <div class="card-bar-actions">
+<a class="icon-btn" href="${href(`admin/?edit=${card.id}`)}" data-edit data-admin hidden aria-label="Редактировать карточку">${icon.edit}</a>
 <button class="icon-btn" type="button" data-visibility="card" data-admin hidden aria-label="Скрыть от всех">${icon.eye}</button>
 <button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${icon.trash}</button>
 <button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${icon.link}</button>
@@ -516,7 +520,7 @@ function adminPage() {
 <body class="admin" data-script-url="${esc(scriptUrl())}" data-base="${esc(BASE)}">
 <header class="top admin-top">
 <a class="admin-link" href="${href()}">На сайт</a>
-<span class="admin-title">Новая карточка</span>
+<span class="admin-title" data-admin-title>Новая карточка</span>
 <button class="admin-link admin-link--end" type="button" data-rebuild hidden>Обновить сайт</button>
 </header>
 
@@ -642,17 +646,17 @@ function adminPage() {
 <div class="publish-bar">
 <p class="form-error" data-form-error hidden></p>
 <button class="btn-primary" type="submit" data-publish>Опубликовать</button>
-<span class="hint hint--center">Появится на сайте через 1–2 минуты</span>
+<span class="hint hint--center" data-publish-hint>Появится на сайте через 1–2 минуты</span>
 </div>
 </form>
 </section>
 
 <section class="screen" data-screen="done" hidden>
 <div class="admin-form">
-<h1 class="admin-h1">Опубликовано</h1>
+<h1 class="admin-h1" data-done-title>Опубликовано</h1>
 <p class="lede" data-done-text></p>
 <a class="btn-outline btn-outline--wide" data-done-link href="#">Открыть карточку</a>
-<button class="btn-primary" type="button" data-done-again>Добавить ещё</button>
+<button class="btn-primary" type="button" data-done-again>Добавить новую карточку</button>
 </div>
 </section>
 
