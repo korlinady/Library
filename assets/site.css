@@ -454,3 +454,45 @@ body.sheet-open .sheet { transform: none; }
 @media (prefers-reduced-motion: reduce) {
   .sheet, .backdrop, .main { transition: none !important; }
 }
+
+/* ───────── Кнопки админа в шапке ───────── */
+
+.top-actions { display: flex; align-items: center; }
+
+/* ───────── Теги ───────── */
+
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.fact dd .tag { text-decoration: none; }
+.tag {
+  min-height: 30px;
+  padding: 3px 10px;
+  display: inline-flex;
+  align-items: center;
+  background: var(--tone);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.2;
+}
+.tag:hover { text-decoration: underline; text-underline-offset: 3px; }
+.tag--0 { --tone: #f6d5c7; }
+.tag--1 { --tone: #f3e3a3; }
+.tag--2 { --tone: #cfe8c9; }
+.tag--3 { --tone: #c9def2; }
+.tag--4 { --tone: #ddd3f2; }
+.tag--5 { --tone: #f2cfe0; }
+.tag--6 { --tone: #cde9e4; }
+.tag--7 { --tone: #e8dcc8; }
+@media (prefers-color-scheme: dark) {
+  .tag--0 { --tone: #5c3a2e; }
+  .tag--1 { --tone: #574a1c; }
+  .tag--2 { --tone: #2f4a2c; }
+  .tag--3 { --tone: #29405a; }
+  .tag--4 { --tone: #403559; }
+  .tag--5 { --tone: #58304a; }
+  .tag--6 { --tone: #234a44; }
+  .tag--7 { --tone: #4b4030; }
+}
+
+/* Фильтр по тегу в строке поиска */
+.searchbar { display: flex; align-items: center; }
+.searchbar input { flex: 1; }

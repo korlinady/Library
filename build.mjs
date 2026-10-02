@@ -196,11 +196,21 @@ function excerpt(text, max = 160) {
   return t.length > max ? t.slice(0, max - 1).trimEnd() + '…' : t;
 }
 
+// Один и тот же тег всегда получает один и тот же цвет из 8
+function tagTone(tag) {
+  let h = 0;
+  for (const ch of String(tag).toLowerCase()) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return h % 8;
+}
+const tagHref = (tag) => href(`?q=${encodeURIComponent('#' + tag)}`);
+
 const icon = {
   search: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
   close: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   link: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
   down: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  plus: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  trash: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5"/></svg>',
   ext: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"/></svg>',
 };
 
@@ -232,13 +242,16 @@ ${og}
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <link rel="stylesheet" href="${href('assets/site.css')}?v=${VERSION}">
 </head>
-<body class="${bodyClass}">
+<body class="${bodyClass}" data-script-url="${esc(scriptUrl())}" data-base="${esc(BASE)}">
 <a class="skip" href="#main">К содержимому</a>
 <header class="top">
 <a class="top-home" href="${href()}">${esc(TITLE)}</a>
+<div class="top-actions">
 ${hasList ? `<button class="icon-btn" type="button" data-search-toggle aria-label="Поиск" aria-expanded="false" aria-controls="search">${icon.search}</button>` : ''}
+<a class="icon-btn" href="${href('admin/')}" data-admin hidden aria-label="Новая карточка">${icon.plus}</a>
+</div>
 </header>
-${hasList ? `<div class="searchbar" id="search" hidden><label class="sr-only" for="q">Поиск по карточкам</label><input id="q" type="search" placeholder="Название, описание или тег" autocomplete="off" data-search></div>` : ''}
+${hasList ? `<div class="searchbar" id="search" hidden><label class="sr-only" for="q">Поиск по карточкам</label><input id="q" type="search" placeholder="Название, описание или #тег" autocomplete="off" data-search></div>` : ''}
 <div class="shell">
 ${sidebar(model, active)}
 <main id="main" class="main">
@@ -279,6 +292,7 @@ function sheetMarkup() {
 <div class="card-bar" data-drag>
 <span class="card-bar-num" data-sheet-num></span>
 <div class="card-bar-actions">
+<button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${icon.trash}</button>
 <button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${icon.link}</button>
 <button class="icon-btn" type="button" data-sheet-close aria-label="Закрыть">${icon.close}</button>
 </div>
@@ -296,7 +310,8 @@ function picture(id, model, { sizes, eager = false, alt = '' } = {}) {
 function tile(card, model) {
   const n = card.files.length;
   const search = [card.title, card.description, card.tags.join(' ')].join(' ').toLowerCase();
-  return `<a class="tile" href="${href(`c/${card.num}/`)}" data-cols="${esc(card.cols.join(' '))}" data-search="${esc(search)}">
+  const tags = card.tags.map((t) => t.toLowerCase()).join('|');
+  return `<a class="tile" href="${href(`c/${card.num}/`)}" data-id="${card.id}" data-cols="${esc(card.cols.join(' '))}" data-tags="${esc(tags)}" data-search="${esc(search)}">
 <div class="tile-img">${picture(card.cover, model, { sizes: '(min-width: 640px) 240px, 50vw' })}</div>
 <div class="tile-body">
 <div class="tile-meta"><span>№ ${card.num}</span><span>${n ? nFiles(n) : '—'}</span></div>
@@ -383,7 +398,8 @@ function cardArticle(card, model) {
   const facts = [
     cols.length && ['Коллекции', `<span class="fact-list">${cols.join('')}</span>`],
     card.created && ['Добавлено', `<span class="mono">${fmtDate(card.created)}</span>`],
-    card.tags.length && ['Теги', esc(card.tags.join(', '))],
+    card.tags.length && ['Теги', `<span class="tags">${card.tags.map((t) =>
+      `<a class="tag tag--${tagTone(t)}" href="${tagHref(t)}" data-tag="${esc(t)}">${esc(t)}</a>`).join('')}</span>`],
     card.link && ['Источник', `<a href="${esc(card.link)}" rel="noopener">${esc(hostOf(card.link))} ↗</a>`],
   ].filter(Boolean);
 
@@ -404,7 +420,7 @@ function cardArticle(card, model) {
     ? picture(card.cover, model, { sizes: '(min-width: 1024px) 480px, 100vw', eager: true, alt: card.title })
     : '';
 
-  return `<article class="card" data-num="${card.num}">
+  return `<article class="card" data-num="${card.num}" data-id="${card.id}" data-title="${esc(card.title)}">
 <figure class="card-cover${cover ? '' : ' card-cover--empty'}">${cover}</figure>
 <h1 class="card-title">${esc(card.title)}</h1>
 ${facts.length ? `<dl class="facts">${facts.map(([k, v]) => `<div class="fact"><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` : ''}
@@ -419,6 +435,7 @@ function cardPage(card, model) {
 <div class="card-bar">
 <span class="card-bar-num">№ ${card.num}</span>
 <div class="card-bar-actions">
+<button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${icon.trash}</button>
 <button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${icon.link}</button>
 <a class="icon-btn" href="${href()}" aria-label="Закрыть">${icon.close}</a>
 </div>

@@ -4,8 +4,30 @@
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
   };
   const desktop = window.matchMedia('(min-width: 1024px)');
+  const SCRIPT_URL = document.body.dataset.scriptUrl;
+  const BASE = document.body.dataset.base || '/';
+  const KEY_STORE = 'library:key';
+  const DELETED_STORE = 'library:deleted';
+  let closeSheet = null;
+
+  // ───────── Режим админа: ключ уже введён в форме на этом устройстве ─────────
+  const adminKey = store.get(KEY_STORE);
+  if (adminKey) $$('[data-admin]').forEach((el) => { el.hidden = false; });
+
+  // Удалённые карточки прячем сразу, не дожидаясь пересборки сайта (15 минут)
+  function readDeleted() {
+    try {
+      const d = JSON.parse(store.get(DELETED_STORE) || '{}');
+      const now = Date.now();
+      for (const id in d) if (now - d[id] > 15 * 60 * 1000) delete d[id];
+      return d;
+    } catch { return {}; }
+  }
+  const deleted = readDeleted();
+  store.set(DELETED_STORE, JSON.stringify(deleted));
 
   // ───────── Уведомление ─────────
   const toast = $('[data-toast]');
@@ -35,6 +57,16 @@
   let query = '';
   const appliers = [];
 
+  // «#тег» ищет точное совпадение тега, всё остальное — по тексту
+  function matches(tile) {
+    if (!query) return true;
+    if (query.startsWith('#')) {
+      const tag = query.slice(1).trim();
+      return !tag || (tile.dataset.tags || '').split('|').includes(tag);
+    }
+    return tile.dataset.search.includes(query);
+  }
+
   for (const list of $$('[data-list]')) {
     const grid = $('[data-grid]', list);
     const count = $('[data-count]', list);
@@ -47,8 +79,8 @@
       let visible = 0;
       for (const t of $$('.tile', grid)) {
         const okFilter = !filter || t.dataset.cols.split(' ').includes(filter);
-        const okQuery = !query || t.dataset.search.includes(query);
-        t.hidden = !(okFilter && okQuery);
+        const okQuery = matches(t);
+        t.hidden = !(okFilter && okQuery) || !!deleted[t.dataset.id];
         if (!t.hidden) visible++;
       }
       if (count) count.textContent = visible;
@@ -96,6 +128,71 @@
   searchInput?.addEventListener('input', () => {
     query = searchInput.value.trim().toLowerCase();
     appliers.forEach((f) => f());
+  });
+
+  function setSearch(text) {
+    if (!searchInput) return;
+    searchBar.hidden = false;
+    searchToggle.setAttribute('aria-expanded', 'true');
+    searchInput.value = text;
+    query = text.trim().toLowerCase();
+    appliers.forEach((f) => f());
+    const list = $('[data-list]');
+    if (list) list.scrollIntoView({ block: 'start' });
+  }
+
+  const initialQ = new URLSearchParams(location.search).get('q');
+  if (initialQ) setSearch(initialQ);
+  else appliers.forEach((f) => f());
+
+  // Клик по тегу на главной фильтрует без перезагрузки
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-tag]');
+    if (!a || !searchInput || !document.body.classList.contains('page-home')) return;
+    e.preventDefault();
+    if (closeSheet) closeSheet();
+    setSearch('#' + a.dataset.tag);
+    history.replaceState(history.state, '', BASE + '?q=' + encodeURIComponent('#' + a.dataset.tag));
+  });
+
+  // ───────── Удаление карточки ─────────
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-delete]');
+    if (!btn || !adminKey) return;
+    const article = $('article.card', btn.closest('[data-sheet]') || document);
+    if (!article) return;
+    const id = article.dataset.id;
+    const ok = window.confirm(`Удалить карточку № ${article.dataset.num} «${article.dataset.title}»?\n\nЗагруженные файлы уйдут в корзину Google Drive, оттуда их можно восстановить в течение 30 дней. Файлы, добавленные ссылкой, останутся на месте.`);
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ key: adminKey, action: 'deleteCard', id: Number(id) }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        if (data.error === 'unauthorized') {
+          store.del && store.del(KEY_STORE);
+          throw new Error('Ключ не подходит. Войди заново в форме /admin.');
+        }
+        throw new Error(data.error);
+      }
+      deleted[id] = Date.now();
+      store.set(DELETED_STORE, JSON.stringify(deleted));
+      if (btn.closest('[data-sheet]')) {
+        if (closeSheet) closeSheet();
+        appliers.forEach((f) => f());
+        say('Карточка удалена. Сайт обновится через 1–2 минуты');
+      } else {
+        location.href = BASE;
+      }
+    } catch (err) {
+      say(err.message && !/fetch/i.test(err.message) ? err.message : 'Не получилось удалить: нет связи со скриптом');
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // ───────── Шторка с карточкой ─────────
@@ -188,6 +285,7 @@
     else if (document.body.classList.contains('sheet-open')) hide();
   });
 
+  closeSheet = close;
   closeBtn.addEventListener('click', close);
   backdrop.addEventListener('click', close);
   document.addEventListener('keydown', (e) => {
