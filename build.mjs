@@ -527,7 +527,10 @@ function adminPage() {
 <main id="main" class="admin-main">
 
 <section class="screen" data-screen="loading">
-<p class="empty">Загружаем коллекции…</p>
+<div class="admin-form">
+<p class="empty" data-loading-text>Загружаем…</p>
+<button class="btn-outline btn-outline--wide" type="button" data-loading-retry hidden>Попробовать ещё раз</button>
+</div>
 </section>
 
 <section class="screen" data-screen="key" hidden>

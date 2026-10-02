@@ -101,30 +101,67 @@
   };
   showAdmin();
 
-  async function api(action, payload) {
-    let res;
+  const RETRYABLE = new Set(['listAll', 'renameCard', 'updateCollection', 'setHidden', 'publish']);
+
+  async function apiOnce(action, payload, timeout) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
     try {
-      res = await fetch(SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(Object.assign({ key: adminKey, action }, payload)),
-      });
-    } catch {
-      throw new Error('Нет связи со скриптом. Проверь интернет.');
-    }
-    let data;
-    try { data = await res.json(); } catch { throw new Error('Скрипт ответил не так, как ожидалось.'); }
-    if (!data.ok) {
-      if (data.error === 'unauthorized') {
-        adminKey = null;
-        store.del(KEY_STORE);
-        store.del(LIVE_STORE);
-        $$('[data-admin]').forEach((el) => { el.hidden = true; });
-        throw new Error('Ключ не подходит. Войди заново в форме /admin.');
+      let res;
+      try {
+        res = await fetch(SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(Object.assign({ key: adminKey, action }, payload)),
+          signal: ctrl.signal,
+        });
+      } catch {
+        const err = new Error(ctrl.signal.aborted ? 'Скрипт не ответил вовремя. Попробуй ещё раз.' : 'Нет связи со скриптом. Проверь интернет.');
+        err.retryable = true;
+        throw err;
       }
-      throw new Error(data.error || 'Неизвестная ошибка.');
+      let data;
+      try { data = await res.json(); } catch {
+        const err = new Error(ctrl.signal.aborted ? 'Скрипт не ответил вовремя. Попробуй ещё раз.' : 'Скрипт ответил не так, как ожидалось.');
+        err.retryable = ctrl.signal.aborted;
+        throw err;
+      }
+      if (!data.ok) {
+        if (data.error === 'unauthorized') {
+          adminKey = null;
+          store.del(KEY_STORE);
+          store.del(LIVE_STORE);
+          $$('[data-admin]').forEach((el) => { el.hidden = true; });
+          throw new Error('Ключ не подходит. Войди заново в форме /admin.');
+        }
+        throw new Error(data.error || 'Неизвестная ошибка.');
+      }
+      return data;
+    } finally {
+      clearTimeout(timer);
     }
-    return data;
+  }
+
+  async function api(action, payload) {
+    const timeout = action === 'listAll' ? 20000 : 60000;
+    const tries = RETRYABLE.has(action) ? 2 : 1;
+    let last;
+    for (let i = 0; i < tries; i++) {
+      if (i > 0 && action !== 'listAll') say('Скрипт отвечает медленно, пробую ещё раз…');
+      try {
+        return await apiOnce(action, payload, timeout);
+      } catch (err) {
+        last = err;
+        if (!err.retryable) throw err;
+      }
+    }
+    if (action === 'createCollection' && /вовремя/.test(last.message)) {
+      last.message = 'Скрипт не ответил за минуту. Коллекция могла создаться — обнови страницу и проверь.';
+    }
+    if (action === 'deleteCard' || action === 'deleteCollection') {
+      if (/вовремя/.test(last.message)) last.message = 'Скрипт не ответил за минуту. Обнови страницу и проверь, удалилось ли.';
+    }
+    throw last;
   }
 
   // ═════════ Копирование ссылки ═════════

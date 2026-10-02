@@ -46,28 +46,75 @@
 
   class AuthError extends Error {}
 
-  async function api(action, payload = {}) {
-    let res;
+  // Чтение и повторяемые правки можно безопасно повторить; создание — нет, иначе будет дубль
+  const READS = new Set(['listCollections', 'getCard', 'editData', 'listAll', 'ping']);
+  const RETRYABLE = new Set([...READS, 'updateCard', 'uploadFile', 'publish']);
+
+  function timeoutText(action) {
+    if (action === 'createCard') return 'Скрипт не ответил за минуту. Карточка могла сохраниться — открой сайт и проверь, прежде чем публиковать ещё раз.';
+    if (action === 'createCollection') return 'Скрипт не ответил за минуту. Коллекция могла создаться — обнови страницу и проверь.';
+    if (READS.has(action)) return 'Скрипт не отвечает. Проверь интернет и попробуй ещё раз.';
+    return 'Скрипт не ответил вовремя. Попробуй ещё раз.';
+  }
+
+  async function apiOnce(action, payload, timeout) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
     try {
-      res = await fetch(SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(Object.assign({ key, action }, payload)),
-      });
-    } catch {
-      throw new Error('Нет связи со скриптом. Проверь интернет и попробуй ещё раз.');
+      let res;
+      try {
+        res = await fetch(SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(Object.assign({ key, action }, payload)),
+          signal: ctrl.signal,
+        });
+      } catch {
+        const err = new Error(ctrl.signal.aborted ? timeoutText(action) : 'Нет связи со скриптом. Проверь интернет и попробуй ещё раз.');
+        err.retryable = true;
+        throw err;
+      }
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        const err = new Error(ctrl.signal.aborted ? timeoutText(action) : 'Скрипт ответил не так, как ожидалось. Проверь, что веб-приложение развёрнуто с доступом «Все».');
+        err.retryable = ctrl.signal.aborted;
+        throw err;
+      }
+      if (!data.ok) {
+        if (data.error === 'unauthorized') throw new AuthError('Ключ не подходит.');
+        const err = new Error(data.error || 'Неизвестная ошибка.');
+        err.code = data.error;
+        throw err;
+      }
+      return data;
+    } finally {
+      clearTimeout(timer);
     }
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      throw new Error('Скрипт ответил не так, как ожидалось. Проверь, что веб-приложение развёрнуто с доступом «Все».');
+  }
+
+  async function api(action, payload = {}, opts = {}) {
+    let timeout = opts.timeout || (READS.has(action) ? 20000 : 60000);
+    if (action === 'uploadFile' && payload.data) {
+      // ~50 КБ/с на плохой мобильной связи, но не больше 15 минут
+      timeout = Math.min(15 * 60 * 1000, 30000 + (payload.data.length * 0.75) / 50);
     }
-    if (!data.ok) {
-      if (data.error === 'unauthorized') throw new AuthError('Ключ не подходит.');
-      throw new Error(data.error || 'Неизвестная ошибка.');
+    const tries = RETRYABLE.has(action) ? 2 : 1;
+    let last;
+    for (let i = 0; i < tries; i++) {
+      if (i > 0) {
+        if (opts.onRetry) opts.onRetry();
+        else say('Скрипт отвечает медленно, пробую ещё раз…');
+      }
+      try {
+        return await apiOnce(action, payload, timeout);
+      } catch (err) {
+        last = err;
+        if (err instanceof AuthError || !err.retryable) throw err;
+      }
     }
-    return data;
+    throw last;
   }
 
   function handleAuth(err) {
@@ -89,6 +136,18 @@
     window.scrollTo(0, 0);
   }
 
+  async function fetchFresh() {
+    try {
+      return await api('editData', { id: EDIT_ID || 0 });
+    } catch (err) {
+      if (err.code !== 'unknown_action') throw err;
+      // Старая версия скрипта: два запроса вместо одного
+      const cols = await api('listCollections');
+      const card = EDIT_ID ? (await api('getCard', { id: EDIT_ID })).card : null;
+      return { collections: cols.collections, card };
+    }
+  }
+
   async function start() {
     if (!SCRIPT_URL) {
       show('key');
@@ -96,18 +155,46 @@
       return;
     }
     if (!key) { show('key'); return; }
-    show('loading');
+
+    // 1. Сразу — из копии на устройстве
+    let shown = false;
+    const live = readLive();
+    if (live) {
+      setCollections(colsFromLive(live));
+      const c = EDIT_ID ? cardFromLive(live, EDIT_ID) : null;
+      if (c) fillCard(c);
+      else if (!EDIT_ID) restoreDraft();
+      if (c || !EDIT_ID) { renderAll(); show('form'); shown = true; }
+    }
+    if (!shown) {
+      show('loading');
+      setLoading('Загружаем…');
+    }
+
+    // 2. Тихо сверяемся со свежими данными
     try {
-      await loadCollections();
-      if (EDIT_ID) await loadCard(); else restoreDraft();
+      const r = await fetchFresh();
+      setCollections(r.collections || []);
+      if (EDIT_ID) {
+        if (!r.card) throw new Error('Карточка не найдена — возможно, её удалили.');
+        if (!shown || !touched) fillCard(r.card);
+      } else if (!shown) {
+        restoreDraft();
+      }
       renderAll();
-      show('form');
+      if (!shown) show('form');
     } catch (err) {
       if (handleAuth(err)) return;
-      show('key');
-      setError($('[data-key-error]'), err.message);
+      if (shown) say('Не удалось сверить с таблицей: ' + err.message);
+      else setLoading(err.message, true);
     }
   }
+
+  function setLoading(text, canRetry = false) {
+    $('[data-loading-text]').textContent = text;
+    $('[data-loading-retry]').hidden = !canRetry;
+  }
+  $('[data-loading-retry]').addEventListener('click', () => start());
 
   $('[data-key-form]').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -119,12 +206,10 @@
     const btn = $('[type="submit"]', e.target);
     btn.disabled = true;
     try {
-      await loadCollections();
+      await api('ping');
       store.set(KEY_STORE, key);
       input.value = '';
-      if (EDIT_ID) await loadCard(); else restoreDraft();
-      renderAll();
-      show('form');
+      start();
     } catch (ex) {
       key = null;
       setError(err, ex.message);
@@ -165,8 +250,10 @@
         for (const k in f) if (!k.startsWith('_')) o[k] = f[k];
         return o;
       };
+      const cover = keep(state.cover) ? clean(state.cover) : null;
+      if (cover && String(cover.thumb || '').startsWith('blob:')) cover.thumb = '';
       const draft = Object.assign({}, state, {
-        cover: keep(state.cover) ? clean(state.cover) : null,
+        cover,
         files: state.files.filter(keep).map(clean),
       });
       store.set(DRAFT_STORE, JSON.stringify(draft));
@@ -200,9 +287,29 @@
 
   const driveImg = (id, w) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w${w}`;
 
-  async function loadCard() {
-    const r = await api('getCard', { id: EDIT_ID });
-    const c = r.card;
+  // Копия данных, которую сайт держит на этом устройстве
+  function readLive() {
+    try {
+      const c = JSON.parse(store.get('library:live') || 'null');
+      return c && c.data && c.data.public ? c.data : null;
+    } catch { return null; }
+  }
+  const colsFromLive = (d) => d.public.collections.map((c) => Object.assign({}, c, { hidden: false }))
+    .concat(d.hidden.collections.map((c) => Object.assign({}, c, { hidden: true })));
+  function cardFromLive(d, id) {
+    const mem = d.hidden.memberships || {};
+    let c = d.public.cards.find((x) => Number(x.id) === id);
+    if (c) return Object.assign({}, c, { hidden: false, collections: (c.collections || []).concat(mem[c.id] || []) });
+    c = d.hidden.cards.find((x) => Number(x.id) === id);
+    return c ? Object.assign({}, c, { hidden: !!c.selfHidden }) : null;
+  }
+
+  // Пользователь уже что-то менял — свежие данные поверх не кладём
+  let touched = false;
+  ['input', 'change'].forEach((ev) => $('[data-card-form]').addEventListener(ev, () => { touched = true; }));
+  $('[data-card-form]').addEventListener('click', (e) => { if (e.target.closest('button, label')) touched = true; });
+
+  function fillCard(c) {
     original = c;
     state = Object.assign(emptyState(), {
       title: c.title,
@@ -212,7 +319,7 @@
       star: !!c.star,
       hidden: !!c.hidden,
       cols: (c.collections || []).filter((id) => collections.some((x) => x.id === id)),
-      cover: c.cover ? { id: nid(), kind: 'existing', fileId: c.cover, status: 'done', name: 'Обложка', thumb: driveImg(c.cover, 480) } : null,
+      cover: c.cover ? { id: nid(), kind: 'existing', fileId: c.cover, status: 'done', name: 'Обложка', thumb: `${BASE}img/${c.cover}-800.webp`, fallback: driveImg(c.cover, 480) } : null,
       files: (c.files || []).map((f) => ({
         id: nid(), kind: 'existing', fileId: f.driveId, name: f.title, title: f.title,
         size: f.size, type: f.type, status: 'done', drive: f.kind === 'drive',
@@ -233,8 +340,13 @@
 
   async function loadCollections() {
     const r = await api('listCollections');
-    const raw = r.collections || [];
-    const byOrder = (a, b) => (a.order - b.order) || a.name.localeCompare(b.name, 'ru');
+    setCollections(r.collections || []);
+  }
+
+  // Нумерация как на сайте: сначала открытые, затем скрытые
+  function setCollections(raw) {
+    raw = raw.map((c) => Object.assign({}, c));
+    const byOrder = (a, b) => (!!a.hidden - !!b.hidden) || ((Number(a.order) || 0) - (Number(b.order) || 0)) || a.name.localeCompare(b.name, 'ru');
     const tops = raw.filter((c) => !c.parent || !raw.some((p) => p.id === c.parent)).sort(byOrder);
     collections = [];
     tops.forEach((c, i) => {
@@ -353,27 +465,61 @@
     });
   }
 
-  async function compress(file, max, quality) {
-    let src, w, h;
+  // Холст освобождаем сразу: на iPhone память под холсты общая и маленькая,
+  // и после нескольких картинок Safari молча отдаёт пустой холст
+  const freeCanvas = (c) => { c.width = 0; c.height = 0; };
+
+  // Сплошь белый (или пустой) холст — признак того, что картинка не нарисовалась.
+  // Проверяем 256 точек по сетке прямо на холсте.
+  function looksBlank(canvas) {
+    const ctx = canvas.getContext('2d');
+    const n = 16;
     try {
-      src = await createImageBitmap(file);
-      w = src.width; h = src.height;
+      for (let iy = 0; iy < n; iy++) {
+        for (let ix = 0; ix < n; ix++) {
+          const x = Math.min(canvas.width - 1, Math.floor(((ix + 0.5) / n) * canvas.width));
+          const y = Math.min(canvas.height - 1, Math.floor(((iy + 0.5) / n) * canvas.height));
+          const d = ctx.getImageData(x, y, 1, 1).data;
+          if (d[3] > 0 && (d[0] < 248 || d[1] < 248 || d[2] < 248)) return false;
+        }
+      }
     } catch {
-      src = await loadImage(file);
-      w = src.naturalWidth; h = src.naturalHeight;
+      return false; // не смогли проверить — считаем, что всё нормально
     }
+    return true;
+  }
+
+  async function drawTo(src, w, h, max, quality) {
     const s = Math.min(1, max / Math.max(w, h));
     const cw = Math.max(1, Math.round(w * s));
     const ch = Math.max(1, Math.round(h * s));
     const canvas = document.createElement('canvas');
     canvas.width = cw;
     canvas.height = ch;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, cw, ch);
-    ctx.drawImage(src, 0, 0, cw, ch);
-    if (src.close) src.close();
-    return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode'))), 'image/jpeg', quality));
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('no context');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(src, 0, 0, cw, ch);
+      if (looksBlank(canvas)) throw new Error('blank');
+      return await new Promise((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode'))), 'image/jpeg', quality));
+    } finally {
+      freeCanvas(canvas);
+    }
+  }
+
+  // Два способа открыть картинку: если первый дал пустоту, пробуем второй
+  async function compress(file, max, quality) {
+    try {
+      const bmp = await createImageBitmap(file);
+      try { return await drawTo(bmp, bmp.width, bmp.height, max, quality); }
+      finally { if (bmp.close) bmp.close(); }
+    } catch {
+      const img = await loadImage(file);
+      return drawTo(img, img.naturalWidth, img.naturalHeight, max, quality);
+    }
   }
 
   function toDataURL(blob) {
@@ -443,16 +589,25 @@
     if (!file) return;
     const formErr = $('[data-form-error]');
     setError(formErr, '');
-    let blob, thumb;
+    let blob, thumb, name;
     try {
       blob = await compress(file, 1600, 0.85);
-      thumb = await toDataURL(await compress(file, 480, 0.7));
+      name = baseName(file.name) + '.jpg';
+      // Превью — из уже сжатой версии: меньше памяти и одно декодирование вместо двух
+      thumb = await toDataURL(await compress(blob, 480, 0.7)).catch(() => '');
     } catch {
-      setError(formErr, 'Не получилось открыть это изображение. Попробуй JPG или PNG.');
-      return;
+      // Запасной путь: загружаем оригинал как есть, сайт уменьшит его при сборке
+      if (file.size > MAX_BYTES) {
+        setError(formErr, 'Не получилось открыть это изображение, а без сжатия оно больше 30 МБ. Попробуй другое фото или сделай скриншот поменьше.');
+        return;
+      }
+      blob = file;
+      name = file.name || 'cover';
+      thumb = '';
+      say('Не получилось сжать картинку на телефоне — загружаю оригинал');
     }
     removeOriginal();
-    state.cover = { id: nid(), kind: 'upload', name: baseName(file.name) + '.jpg', size: blob.size, thumb, _orig: file };
+    state.cover = { id: nid(), kind: 'upload', name, size: blob.size, thumb: thumb || URL.createObjectURL(blob), _orig: file };
     enqueue(state.cover, blob);
     syncOriginal();
     renderAll();
@@ -498,7 +653,9 @@
     $('[data-cover-empty]').hidden = !!c;
     $('[data-cover-filled]').hidden = !c;
     if (!c) return;
-    $('[data-cover-preview]').src = c.thumb || '';
+    const preview = $('[data-cover-preview]');
+    preview.onerror = c.fallback ? () => { preview.onerror = null; preview.src = c.fallback; } : null;
+    if (preview.getAttribute('src') !== (c.thumb || '')) preview.src = c.thumb || '';
     const status = c.status === 'uploading' ? 'Загружается…'
       : c.status === 'error' ? 'Не загрузилась'
       : c.kind === 'existing' ? 'Текущая обложка'
@@ -645,7 +802,9 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
         const img = state.files.find((f) => f.isImage && f._file);
         if (img) await setCover(img._file);
       }
+      if (pending()) btn.textContent = 'Загружаем файлы…';
       await waitUploads();
+      btn.textContent = EDIT_ID ? 'Сохраняем…' : 'Публикуем…';
       if (state.cover && state.cover.status !== 'done') throw new Error('Обложка не загрузилась. Убери её или выбери заново.');
 
       const filesPayload = state.files.map((f) => f.kind === 'existing'
@@ -665,7 +824,7 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
         coverFileId: state.cover && state.cover.kind === 'upload' ? state.cover.fileId : '',
         removeCover: !state.cover && !!(original && original.cover),
         files: filesPayload,
-      }) : await api('createCard', { withLive: true,
+      }, { onRetry: () => { btn.textContent = 'Скрипт отвечает медленно, пробую ещё раз…'; } }) : await api('createCard', { withLive: true,
         title: state.title.trim(),
         description: state.description,
         link: state.link.trim(),
