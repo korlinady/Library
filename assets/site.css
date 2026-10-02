@@ -583,3 +583,28 @@ textarea.mini-input { min-height: 88px; padding: 10px 12px; line-height: 1.5; re
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+
+/* ───────── Скрытое (видно только админу) ───────── */
+
+.title-actions { display: flex; flex-shrink: 0; }
+.tile--private .tile-img { opacity: 0.55; }
+.tile--private .tile-files { display: none; }
+.tile--private .tile-meta::after {
+  content: 'скрыта';
+  order: 2;
+}
+.crow-flag { display: inline-flex; vertical-align: -2px; margin-right: 6px; }
+.crow--private .crow-name { color: var(--mute); }
+.crow.is-active.crow--private .crow-name { color: var(--bg); }
+.private-note {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+.card .private-note { padding: 0 var(--pad) 16px; margin-top: -8px; }

@@ -212,12 +212,13 @@ const icon = {
   plus: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5"/></svg>',
   pencil: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/></svg>',
+  eye: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
   ext: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"/></svg>',
 };
 
 // ───────────── Шаблоны ─────────────
 
-function layout({ title, description = '', ogImage = '', path: p = '', body, model, active = null, hasList = false, bodyClass = '' }) {
+function layout({ title, description = '', ogImage = '', path: p = '', body, model, active = null, hasList = false, bodyClass = '', colId = '' }) {
   const fullTitle = title ? `${title} — ${TITLE}` : TITLE;
   const og = [
     `<meta property="og:title" content="${esc(title || TITLE)}">`,
@@ -243,7 +244,7 @@ ${og}
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <link rel="stylesheet" href="${href('assets/site.css')}?v=${VERSION}">
 </head>
-<body class="${bodyClass}" data-script-url="${esc(scriptUrl())}" data-base="${esc(BASE)}">
+<body class="${bodyClass}" data-script-url="${esc(scriptUrl())}" data-base="${esc(BASE)}" data-tz="${esc(TZ)}" data-site-title="${esc(TITLE)}"${colId ? ` data-col-id="${esc(colId)}"` : ''}>
 <a class="skip" href="#main">К содержимому</a>
 <header class="top">
 <a class="top-home" href="${href()}">${esc(TITLE)}</a>
@@ -294,6 +295,7 @@ function sheetMarkup() {
 <div class="card-bar" data-drag>
 <span class="card-bar-num" data-sheet-num></span>
 <div class="card-bar-actions">
+<button class="icon-btn" type="button" data-visibility="card" data-admin hidden aria-label="Скрыть от всех">${icon.eye}</button>
 <button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${icon.trash}</button>
 <button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${icon.link}</button>
 <button class="icon-btn" type="button" data-sheet-close aria-label="Закрыть">${icon.close}</button>
@@ -383,7 +385,10 @@ ${c.children.map((k) => `<button class="chip" type="button" data-filter="${esc(k
 <p class="crumbs">${crumbs}</p>
 <div class="title-row">
 <h1 class="hero-title" data-title-text data-col-name="${esc(c.id)}">${esc(c.name)}</h1>
+<div class="title-actions">
+<button class="icon-btn" type="button" data-visibility="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Скрыть от всех">${icon.eye}</button>
 <button class="icon-btn" type="button" data-rename="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Изменить название и описание коллекции">${icon.pencil}</button>
+</div>
 </div>
 <p class="lede" data-col-desc="${esc(c.id)}"${c.description ? '' : ' hidden'}>${esc(c.description)}</p>
 <p class="meta">${esc(meta)}</p>
@@ -393,7 +398,7 @@ ${cardList(c.cards, model, { label: 'Карточки', chips })}`;
   return layout({
     title: c.name, description: excerpt(c.description), path: `col/${c.id}/`,
     ogImage: c.cover && model.images.get(c.cover) ? `img/${c.cover}-og.jpg` : '',
-    body, model, active: c.id, hasList: true, bodyClass: 'page-col',
+    body, model, active: c.id, hasList: true, bodyClass: 'page-col', colId: c.id,
   });
 }
 
@@ -445,6 +450,7 @@ function cardPage(card, model) {
 <div class="card-bar">
 <span class="card-bar-num">№ ${card.num}</span>
 <div class="card-bar-actions">
+<button class="icon-btn" type="button" data-visibility="card" data-admin hidden aria-label="Скрыть от всех">${icon.eye}</button>
 <button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${icon.trash}</button>
 <button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${icon.link}</button>
 <a class="icon-btn" href="${href()}" aria-label="Закрыть">${icon.close}</a>
@@ -460,12 +466,12 @@ ${cardArticle(card, model)}
 }
 
 function notFoundPage(model) {
-  const body = `<section class="hero">
+  const body = `<div data-not-found><section class="hero">
 <h1 class="hero-title">Нет такой страницы</h1>
 <p class="lede">Возможно, карточку скрыли или ссылка набрана с ошибкой.</p>
 <p><a class="link" href="${href()}">Перейти ко всем карточкам</a></p>
-</section>`;
-  return layout({ title: 'Нет такой страницы', body, model, active: null });
+</section></div>`;
+  return layout({ title: 'Нет такой страницы', body, model, active: null, hasList: true, bodyClass: 'page-404' });
 }
 
 // ───────────── Форма /admin ─────────────
@@ -579,6 +585,7 @@ function adminPage() {
 <label class="field-label" for="nc-parent">Внутри коллекции</label>
 <select class="input" id="nc-parent"></select>
 </div>
+<label class="check"><input type="checkbox" id="nc-hidden"> Видна только мне</label>
 <p class="form-error" data-newcol-error hidden></p>
 <div class="row-btns">
 <button class="btn-outline" type="button" data-newcol-create>Создать</button>
@@ -628,6 +635,7 @@ function adminPage() {
 </div>
 
 <label class="check check--big"><input type="checkbox" data-field="star"> В избранное</label>
+<label class="check check--big"><input type="checkbox" data-field="hidden"> Видна только мне</label>
 
 <button class="link-btn link-btn--mute" type="button" data-logout>Выйти на этом устройстве</button>
 

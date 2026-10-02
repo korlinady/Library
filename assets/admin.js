@@ -22,7 +22,7 @@
   let state = emptyState();
 
   function emptyState() {
-    return { title: '', description: '', link: '', tags: '', star: false, keepOriginal: false, cols: [], cover: null, files: [] };
+    return { title: '', description: '', link: '', tags: '', star: false, hidden: false, keepOriginal: false, cols: [], cover: null, files: [] };
   }
 
   // ───────── Сообщения ─────────
@@ -288,7 +288,8 @@
     btn.disabled = true;
     setError(err, '');
     try {
-      const r = await api('createCollection', { name, parent });
+      const r = await api('createCollection', { name, parent, hidden: $('#nc-hidden').checked });
+      $('#nc-hidden').checked = false;
       await loadCollections();
       if (!state.cols.includes(r.collection.id)) state.cols.push(r.collection.id);
       renderCols();
@@ -607,6 +608,7 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
         link: state.link.trim(),
         tags: state.tags,
         star: state.star,
+        hidden: state.hidden,
         collections: state.cols,
         coverFileId: state.cover ? state.cover.fileId : '',
         files: state.files.map((f) => f.kind === 'drive'
@@ -616,7 +618,9 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
 
       const num = pad3(r.card.id);
       const link = `${BASE}c/${num}/`;
-      $('[data-done-text]').textContent = `Карточка № ${num} появится на сайте через 1–2 минуты.` +
+      $('[data-done-text]').textContent = (state.hidden
+        ? `Карточка № ${num} сохранена как скрытая: её видишь только ты, на устройствах, где введён ключ.`
+        : `Карточка № ${num} появится на сайте через 1–2 минуты.`) +
         (r.warnings && r.warnings.length ? ` Обрати внимание: ${r.warnings.join('; ')}.` : '');
       $('[data-done-link]').href = link;
       state = emptyState();
