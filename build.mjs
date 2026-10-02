@@ -423,6 +423,228 @@ function notFoundPage(model) {
   return layout({ title: 'Нет такой страницы', body, model, active: null });
 }
 
+// ───────────── Форма /admin ─────────────
+
+function scriptUrl() {
+  if (config.scriptUrl) return config.scriptUrl;
+  try {
+    const u = new URL(config.exportUrl);
+    u.search = '';
+    return u.href;
+  } catch {
+    return '';
+  }
+}
+
+function adminPage() {
+  const ic = {
+    camera: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+    gallery: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="5" width="16" height="14"/><path d="M4 16l5-5 4 4 3-3 4 4"/></svg>',
+    chevron: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+  };
+  return `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Новая карточка — ${esc(TITLE)}</title>
+<link rel="manifest" href="${href('manifest.webmanifest')}">
+<link rel="apple-touch-icon" href="${href('icons/apple-touch-icon.png')}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="${esc(TITLE)}">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<link rel="stylesheet" href="${href('assets/site.css')}?v=${VERSION}">
+<link rel="stylesheet" href="${href('assets/admin.css')}?v=${VERSION}">
+</head>
+<body class="admin" data-script-url="${esc(scriptUrl())}" data-base="${esc(BASE)}">
+<header class="top admin-top">
+<a class="admin-link" href="${href()}">На сайт</a>
+<span class="admin-title">Новая карточка</span>
+<button class="admin-link admin-link--end" type="button" data-rebuild hidden>Обновить сайт</button>
+</header>
+
+<main id="main" class="admin-main">
+
+<section class="screen" data-screen="loading">
+<p class="empty">Загружаем коллекции…</p>
+</section>
+
+<section class="screen" data-screen="key" hidden>
+<form class="admin-form" data-key-form>
+<h1 class="admin-h1">Вход</h1>
+<p class="lede">Вставь секретный ключ из журнала Apps Script. Он сохранится на этом устройстве, и вводить его снова не придётся.</p>
+<div class="field">
+<label class="field-label" for="key">Ключ</label>
+<input class="input" id="key" type="password" autocomplete="current-password" required>
+</div>
+<p class="form-error" data-key-error hidden></p>
+<button class="btn-primary" type="submit">Войти</button>
+</form>
+</section>
+
+<section class="screen" data-screen="form" hidden>
+<form class="admin-form" data-card-form novalidate>
+
+<div class="field">
+<span class="field-label">Обложка</span>
+<div class="cover-empty" data-cover-empty>
+<div class="cover-buttons">
+<label class="btn-outline"><input class="sr-only" type="file" accept="image/*" capture="environment" data-cover-input>${ic.camera}Камера</label>
+<label class="btn-outline"><input class="sr-only" type="file" accept="image/*" data-cover-input>${ic.gallery}Галерея</label>
+</div>
+<span class="hint">Сожмётся до 1600 px</span>
+</div>
+<div class="cover-filled" data-cover-filled hidden>
+<img class="cover-preview" data-cover-preview alt="">
+<div class="cover-meta">
+<span class="hint" data-cover-status></span>
+<button class="link-btn" type="button" data-cover-remove>Убрать</button>
+</div>
+</div>
+<label class="check"><input type="checkbox" data-field="keepOriginal"> Приложить оригинал фото к файлам</label>
+</div>
+
+<div class="field">
+<label class="field-label" for="f-title">Название</label>
+<input class="input" id="f-title" type="text" placeholder="Как называется" data-field="title" autocomplete="off">
+</div>
+
+<div class="field">
+<span class="field-label" id="cols-label">Коллекции</span>
+<div class="box">
+<div data-picked></div>
+<button class="box-row box-toggle" type="button" data-picker-toggle aria-expanded="false" aria-controls="picker">
+<span data-picker-label>Выбрать</span>${ic.chevron}
+</button>
+<div class="picker" id="picker" data-picker role="group" aria-labelledby="cols-label" hidden></div>
+</div>
+<button class="link-btn" type="button" data-newcol-toggle aria-expanded="false" aria-controls="newcol">+ Новая коллекция</button>
+<div class="subform" id="newcol" data-newcol hidden>
+<div class="field">
+<label class="field-label" for="nc-name">Название коллекции</label>
+<input class="input" id="nc-name" type="text" autocomplete="off">
+</div>
+<div class="field">
+<label class="field-label" for="nc-parent">Внутри коллекции</label>
+<select class="input" id="nc-parent"></select>
+</div>
+<p class="form-error" data-newcol-error hidden></p>
+<div class="row-btns">
+<button class="btn-outline" type="button" data-newcol-create>Создать</button>
+<button class="link-btn" type="button" data-newcol-cancel>Отмена</button>
+</div>
+</div>
+</div>
+
+<div class="field">
+<label class="field-label" for="f-desc">Описание</label>
+<textarea class="input textarea" id="f-desc" placeholder="Что это и зачем" data-field="description"></textarea>
+</div>
+
+<div class="field">
+<label class="field-label" for="f-link">Ссылка на источник</label>
+<input class="input" id="f-link" type="url" inputmode="url" placeholder="https://" data-field="link" autocomplete="off">
+</div>
+
+<div class="field">
+<span class="field-label">Файлы</span>
+<div class="files" data-files></div>
+<div class="two-btns">
+<label class="btn-outline"><input class="sr-only" type="file" multiple data-files-input>+ Файл</label>
+<button class="btn-outline" type="button" data-drive-toggle aria-expanded="false" aria-controls="drive">+ Ссылка на Drive</button>
+</div>
+<div class="subform" id="drive" data-drive hidden>
+<div class="field">
+<label class="field-label" for="d-url">Ссылка на файл или папку</label>
+<input class="input" id="d-url" type="url" inputmode="url" placeholder="https://drive.google.com/…" autocomplete="off">
+</div>
+<div class="field">
+<label class="field-label" for="d-title">Название (необязательно)</label>
+<input class="input" id="d-title" type="text" placeholder="Подставится из Drive" autocomplete="off">
+</div>
+<p class="form-error" data-drive-error hidden></p>
+<div class="row-btns">
+<button class="btn-outline" type="button" data-drive-add>Добавить</button>
+<button class="link-btn" type="button" data-drive-cancel>Отмена</button>
+</div>
+</div>
+<span class="hint">Больше 30 МБ — только ссылкой на Drive</span>
+</div>
+
+<div class="field">
+<label class="field-label" for="f-tags">Теги</label>
+<input class="input" id="f-tags" type="text" placeholder="Через запятую" data-field="tags" autocomplete="off">
+</div>
+
+<label class="check check--big"><input type="checkbox" data-field="star"> В избранное</label>
+
+<button class="link-btn link-btn--mute" type="button" data-logout>Выйти на этом устройстве</button>
+
+<div class="publish-bar">
+<p class="form-error" data-form-error hidden></p>
+<button class="btn-primary" type="submit" data-publish>Опубликовать</button>
+<span class="hint hint--center">Появится на сайте через 1–2 минуты</span>
+</div>
+</form>
+</section>
+
+<section class="screen" data-screen="done" hidden>
+<div class="admin-form">
+<h1 class="admin-h1">Опубликовано</h1>
+<p class="lede" data-done-text></p>
+<a class="btn-outline btn-outline--wide" data-done-link href="#">Открыть карточку</a>
+<button class="btn-primary" type="button" data-done-again>Добавить ещё</button>
+</div>
+</section>
+
+</main>
+<div class="toast" data-toast role="status" aria-live="polite" hidden></div>
+<script src="${href('assets/admin.js')}?v=${VERSION}" defer></script>
+</body>
+</html>
+`;
+}
+
+async function writeAppAssets() {
+  const manifest = {
+    name: `${TITLE} — новая карточка`,
+    short_name: TITLE,
+    start_url: href('admin/'),
+    scope: BASE,
+    display: 'standalone',
+    background_color: '#ffffff',
+    theme_color: '#ffffff',
+    icons: [
+      { src: href('icons/icon-192.png'), sizes: '192x192', type: 'image/png' },
+      { src: href('icons/icon-512.png'), sizes: '512x512', type: 'image/png' },
+      { src: href('icons/icon-512.png'), sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  };
+  await write('manifest.webmanifest', JSON.stringify(manifest, null, 2));
+
+  // Иконка: каталожная карточка — рамка и строки на чёрном
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<rect width="512" height="512" fill="#0a0a0a"/>
+<rect x="136" y="148" width="240" height="216" fill="none" stroke="#ffffff" stroke-width="12"/>
+<rect x="136" y="148" width="240" height="56" fill="#ffffff"/>
+<rect x="168" y="244" width="176" height="10" fill="#ffffff"/>
+<rect x="168" y="280" width="176" height="10" fill="#ffffff"/>
+<rect x="168" y="316" width="112" height="10" fill="#ffffff"/>
+</svg>`;
+  const dir = path.join(OUT, 'icons');
+  await fs.mkdir(dir, { recursive: true });
+  const src = Buffer.from(svg);
+  await sharp(src).resize(512, 512).png().toFile(path.join(dir, 'icon-512.png'));
+  await sharp(src).resize(192, 192).png().toFile(path.join(dir, 'icon-192.png'));
+  await sharp(src).resize(180, 180).png().toFile(path.join(dir, 'apple-touch-icon.png'));
+}
+
 // ───────────── Запись ─────────────
 
 async function write(rel, content) {
@@ -449,6 +671,8 @@ async function main() {
   for (const c of model.ordered) await write(`col/${c.id}/index.html`, collectionPage(c, model));
   for (const card of model.cards) await write(`c/${card.num}/index.html`, cardPage(card, model));
   await write('404.html', notFoundPage(model));
+  await write('admin/index.html', adminPage());
+  await writeAppAssets();
   await write('.nojekyll', '');
   await write('data.json', JSON.stringify(data));
 
