@@ -8,10 +8,9 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch {} },
     del(k) { try { localStorage.removeItem(k); } catch {} },
   };
-  const readJSON = (k, fallback) => { try { return JSON.parse(store.get(k) || 'null') ?? fallback; } catch { return fallback; } };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const pad3 = (n) => { const s = String(n); return s.length >= 3 ? s : s.padStart(3, '0'); };
-  const sel = (v) => CSS.escape(String(v));
+  const pad2 = (n) => String(n).padStart(2, '0');
 
   const BODY = document.body;
   const SCRIPT_URL = BODY.dataset.scriptUrl;
@@ -19,7 +18,6 @@
   const TZ = BODY.dataset.tz || 'Europe/Riga';
   const SITE_TITLE = BODY.dataset.siteTitle || document.title;
   const desktop = window.matchMedia('(min-width: 1024px)');
-  const FRESH = 15 * 60 * 1000;
 
   function plural(n, one, few, many) {
     const m10 = n % 10, m100 = n % 100;
@@ -29,6 +27,7 @@
   }
   const nCards = (n) => `${n} ${plural(n, 'карточка', 'карточки', 'карточек')}`;
   const nFiles = (n) => `${n} ${plural(n, 'файл', 'файла', 'файлов')}`;
+  const nSubs = (n) => `${n} ${plural(n, 'подколлекция', 'подколлекции', 'подколлекций')}`;
   const dateFmt = new Intl.DateTimeFormat('ru-RU', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric' });
   const fmtDate = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : dateFmt.format(d); };
   function fmtSize(bytes) {
@@ -49,13 +48,13 @@
     for (const ch of String(tag).toLowerCase()) h = (h * 31 + ch.codePointAt(0)) >>> 0;
     return h % 8;
   }
-  const driveImg = (id, w) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w${w}`;
 
   const svg = (d, size = 20) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">${d}</svg>`;
+  const EYE_OFF = '<path d="M3 3l18 18M10.6 5.1A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.4 6.4C3.7 8.2 2 12 2 12s3.5 7 10 7c1.9 0 3.5-.5 4.9-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/>';
   const ICON = {
     eye: svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
-    eyeOff: svg('<path d="M3 3l18 18M10.6 5.1A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.4 6.4C3.7 8.2 2 12 2 12s3.5 7 10 7c1.9 0 3.5-.5 4.9-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
-    eyeOffSmall: svg('<path d="M3 3l18 18M10.6 5.1A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.4 6.4C3.7 8.2 2 12 2 12s3.5 7 10 7c1.9 0 3.5-.5 4.9-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/>', 14),
+    eyeOff: svg(EYE_OFF),
+    eyeOffSmall: svg(EYE_OFF, 14),
     pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/>'),
     edit: svg('<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>'),
     trash: svg('<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5"/>'),
@@ -64,6 +63,17 @@
     down: svg('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', 18),
     ext: svg('<path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"/>', 18),
   };
+
+  // Какая это страница — по адресу, с которым её открыли
+  const ROUTE = (() => {
+    const p = location.pathname;
+    const rest = p.startsWith(BASE) ? decodeURIComponent(p.slice(BASE.length)) : '';
+    let m;
+    if (rest === '' || rest === 'index.html') return { type: 'home' };
+    if ((m = rest.match(/^c\/(\d+)\/?(index\.html)?$/))) return { type: 'card', id: Number(m[1]) };
+    if ((m = rest.match(/^col\/([^/]+)\/?(index\.html)?$/))) return { type: 'col', id: m[1] };
+    return { type: 'other' };
+  })();
 
   // ═════════ Уведомление ═════════
 
@@ -76,10 +86,15 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
   }
+  try {
+    const flash = sessionStorage.getItem('library:flash');
+    if (flash) { sessionStorage.removeItem('library:flash'); setTimeout(() => say(flash), 300); }
+  } catch {}
 
   // ═════════ Админ ═════════
 
   const KEY_STORE = 'library:key';
+  const LIVE_STORE = 'library:live';
   let adminKey = store.get(KEY_STORE);
   const showAdmin = (root = document) => {
     if (adminKey) $$('[data-admin]', root).forEach((el) => { el.hidden = false; });
@@ -103,6 +118,7 @@
       if (data.error === 'unauthorized') {
         adminKey = null;
         store.del(KEY_STORE);
+        store.del(LIVE_STORE);
         $$('[data-admin]').forEach((el) => { el.hidden = true; });
         throw new Error('Ключ не подходит. Войди заново в форме /admin.');
       }
@@ -110,43 +126,6 @@
     }
     return data;
   }
-
-  // Временные отметки до пересборки сайта
-  function freshStore(k, isDone = () => false) {
-    const d = readJSON(k, {});
-    const now = Date.now();
-    for (const id in d) {
-      if (!d[id] || typeof d[id] !== 'object') d[id] = { ts: Number(d[id]) || 0 };
-      if (now - d[id].ts > FRESH || isDone(id, d[id])) delete d[id];
-    }
-    store.set(k, JSON.stringify(d));
-    return d;
-  }
-  const saveStore = (k, d) => store.set(k, JSON.stringify(d));
-
-  const deleted = freshStore('library:deleted');
-  const renames = freshStore('library:renames');
-  const newCols = freshStore('library:newcols', (id) => !!$(`a.crow[data-col="${sel(id)}"]`));
-  const deletedCols = freshStore('library:deletedcols', (id) => !$(`a.crow[data-col="${sel(id)}"]:not([data-client])`));
-  function hideDeletedCols() {
-    for (const id in deletedCols) {
-      $$(`[data-col="${sel(id)}"]`).forEach((r) => r.remove());
-      $$(`[data-filter="${sel(id)}"]`).forEach((c) => c.remove());
-    }
-  }
-
-  // Сообщение, переданное через переход на другую страницу
-  try {
-    const flash = sessionStorage.getItem('library:flash');
-    if (flash) { sessionStorage.removeItem('library:flash'); setTimeout(() => say(flash), 300); }
-  } catch {}
-
-  // Только что открытые для всех: видны админу, пока сайт не пересоберётся
-  const transit = freshStore('library:transit', (key) => {
-    const [kind, id] = key.split(':');
-    return kind === 'card' ? !!$(`a.tile[data-id="${sel(id)}"]:not([data-client])`)
-      : !!$(`a.crow[data-col="${sel(id)}"]:not([data-client])`);
-  });
 
   // ═════════ Копирование ссылки ═════════
 
@@ -165,8 +144,11 @@
   // ═════════ Списки ═════════
 
   let query = '';
-  const appliers = [];
-  const applyAll = () => appliers.forEach((f) => f());
+  let appliers = [];
+  const applyAll = () => {
+    appliers = appliers.filter((f) => f.list.isConnected);
+    appliers.forEach((f) => f());
+  };
 
   function matches(tile) {
     if (!query) return true;
@@ -178,7 +160,7 @@
   }
 
   function initList(list) {
-    const grid = $('[data-grid]', list);
+    const grid = list && $('[data-grid]', list);
     if (!grid || list.dataset.ready) return;
     list.dataset.ready = '1';
     const count = $('[data-count]', list);
@@ -191,12 +173,13 @@
       let visible = 0;
       for (const t of $$('.tile', grid)) {
         const okFilter = !filter || (t.dataset.cols || '').split(' ').includes(filter);
-        t.hidden = !(okFilter && matches(t)) || !!deleted[t.dataset.id];
+        t.hidden = !(okFilter && matches(t));
         if (!t.hidden) visible++;
       }
       if (count) count.textContent = visible;
       if (empty) empty.hidden = visible > 0;
     };
+    apply.list = list;
     appliers.push(apply);
 
     const setView = (v) => {
@@ -225,7 +208,7 @@
   }
   $$('[data-list]').forEach(initList);
 
-  // ═════════ Поиск ═════════
+  // ═════════ Поиск и теги ═════════
 
   const searchToggle = $('[data-search-toggle]');
   const searchBar = $('#search');
@@ -255,86 +238,95 @@
   if (initialQ) setSearch(initialQ);
 
   let closeSheet = null;
+  let sheetCardId = null;
 
   document.addEventListener('click', (e) => {
     const a = e.target.closest('a[data-tag]');
-    if (!a || !searchInput || !BODY.classList.contains('page-home')) return;
+    if (!a || !searchInput || ROUTE.type !== 'home') return;
     e.preventDefault();
     if (closeSheet) closeSheet();
     setSearch('#' + a.dataset.tag);
     history.replaceState(history.state, '', BASE + '?q=' + encodeURIComponent('#' + a.dataset.tag));
   });
 
-  // ═════════ Правки: применение к странице ═════════
+  // ═════════ Данные из таблицы (только для админа) ═════════
 
-  function applyRename(kind, id, entry, root = document) {
-    if (kind === 'card') {
-      $$(`a.tile[data-id="${sel(id)}"] .tile-title`, root).forEach((el) => { el.textContent = entry.name; });
-      $$(`article.card[data-id="${sel(id)}"]`, root).forEach((a) => {
-        a.dataset.title = entry.name;
-        const h = $('[data-title-text]', a);
-        if (h) h.textContent = entry.name;
+  let model = null;          // свежие данные: всё, включая скрытое
+  let builtCovers = new Set(); // обложки, уже собранные на сайте
+  let liveJSON = '';
+
+  function buildModel(data) {
+    const byOrder = (a, b) => ((Number(a.order) || 0) - (Number(b.order) || 0)) || String(a.name).localeCompare(String(b.name), 'ru');
+    const pub = (data.public.collections || []).map((c) => Object.assign({}, c, { priv: false, selfHidden: false }));
+    const hid = (data.hidden.collections || []).map((c) => Object.assign({}, c, { priv: true, selfHidden: !!c.selfHidden }));
+    const all = pub.concat(hid);
+    const ids = new Set(all.map((c) => c.id));
+    all.forEach((c) => { c.parent = c.parent && ids.has(c.parent) ? c.parent : ''; });
+
+    const tops = pub.filter((c) => !c.parent).sort(byOrder).concat(hid.filter((c) => !c.parent).sort(byOrder));
+    const ordered = [];
+    tops.forEach((c, i) => {
+      c.num = pad2(i + 1);
+      c.parentCol = null;
+      c.children = pub.filter((k) => k.parent === c.id).sort(byOrder).concat(hid.filter((k) => k.parent === c.id).sort(byOrder));
+      ordered.push(c);
+      c.children.forEach((k, j) => {
+        k.num = `${c.num}.${j + 1}`;
+        k.parentCol = c;
+        k.children = [];
+        ordered.push(k);
       });
-    } else {
-      $$(`[data-col="${sel(id)}"] .crow-name`, root).forEach((el) => { el.textContent = entry.name; });
-      $$(`[data-col-name="${sel(id)}"]`, root).forEach((el) => { el.textContent = entry.name; });
-      if (typeof entry.description === 'string') {
-        $$(`[data-col-desc="${sel(id)}"]`, root).forEach((el) => {
-          el.textContent = entry.description;
-          el.hidden = !entry.description;
-        });
-      }
-    }
+    });
+    const colById = new Map(ordered.map((c) => [c.id, c]));
+    const mem = data.hidden.memberships || {};
+    const cards = (data.public.cards || []).map((c) => Object.assign({}, c, { priv: false, selfHidden: false, collections: (c.collections || []).concat(mem[c.id] || []) }))
+      .concat((data.hidden.cards || []).map((c) => Object.assign({}, c, { priv: true, selfHidden: !!c.selfHidden })))
+      .map((c) => Object.assign(c, { id: Number(c.id), tags: c.tags || [], files: c.files || [], collections: (c.collections || []).filter((x) => colById.has(x)) }))
+      .sort((a, b) => b.id - a.id);
+    ordered.forEach((c) => {
+      const set = new Set([c.id, ...c.children.map((k) => k.id)]);
+      c.cards = cards.filter((x) => x.collections.some((y) => set.has(y)));
+    });
+    return { ordered, tops, colById, cards, cardById: new Map(cards.map((c) => [c.id, c])) };
   }
-  function applyAllRenames(root = document) {
-    for (const k in renames) {
-      const i = k.indexOf(':');
-      applyRename(k.slice(0, i), k.slice(i + 1), renames[k], root);
-    }
-  }
+
+  const imgSrc = (id, w) => builtCovers.has(id)
+    ? `${BASE}img/${id}-${w > 800 ? 1600 : 800}.webp`
+    : `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w${w}`;
 
   // ═════════ Шаблоны (повторяют сборку) ═════════
 
-  // Сведения о коллекциях берём из левой колонки: она есть на каждой странице
-  function colInfo(id) {
-    const row = $(`.side nav [data-col="${sel(id)}"]`);
-    if (!row) return null;
-    return {
-      id,
-      num: $('.crow-num', row).textContent,
-      name: $('.crow-name', row).textContent,
-      parent: row.dataset.parent || '',
-    };
-  }
-  const childIds = (id) => $$(`.side nav [data-parent="${sel(id)}"]`).map((r) => r.dataset.col);
-
-  function tileHTML(card, priv) {
-    const n = (card.files || []).length;
-    const tags = (card.tags || []).map((t) => t.toLowerCase()).join('|');
-    const search = [card.title, card.description, (card.tags || []).join(' ')].join(' ').toLowerCase();
-    const img = card.cover ? `<img src="${driveImg(card.cover, 800)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '';
-    return `<a class="tile${priv ? ' tile--private' : ''}" href="${BASE}c/${pad3(card.id)}/" data-id="${card.id}" data-cols="${esc((card.collections || []).join(' '))}" data-tags="${esc(tags)}" data-search="${esc(search)}" data-client="1"${priv ? ' data-private="1"' : ''}>
+  function tileHTML(c) {
+    const n = c.files.length;
+    const tags = c.tags.map((t) => t.toLowerCase()).join('|');
+    const search = [c.title, c.description, c.tags.join(' ')].join(' ').toLowerCase();
+    const img = c.cover ? `<img src="${imgSrc(c.cover, 800)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '';
+    return `<a class="tile${c.priv ? ' tile--private' : ''}" href="${BASE}c/${pad3(c.id)}/" data-id="${c.id}" data-cols="${esc(c.collections.join(' '))}" data-tags="${esc(tags)}" data-search="${esc(search)}"${c.priv ? ' data-private="1"' : ''}>
 <div class="tile-img">${img}</div>
 <div class="tile-body">
-<div class="tile-meta"><span>№ ${pad3(card.id)}</span><span class="tile-files">${n ? nFiles(n) : '—'}</span></div>
-<span class="tile-title">${esc(card.title)}</span>
+<div class="tile-meta"><span>№ ${pad3(c.id)}</span><span class="tile-files">${n ? nFiles(n) : '—'}</span></div>
+<span class="tile-title">${esc(c.title)}</span>
 </div>
 </a>`;
   }
 
-  function articleHTML(card) {
-    const cols = (card.collections || []).map(colInfo).filter(Boolean).map((c) => {
-      const p = c.parent ? colInfo(c.parent) : null;
-      return `<a href="${BASE}col/${encodeURIComponent(c.id)}/"><span class="mono">${esc(c.num)}</span> ${esc(p ? `${p.name} / ${c.name}` : c.name)}</a>`;
-    });
+  const visLabel = (self) => (self ? 'Показать всем' : 'Скрыть от всех');
+  const visBtn = (kind, id, self) => `<button class="icon-btn" type="button" data-visibility="${kind}" data-id="${esc(id)}" data-admin hidden aria-label="${visLabel(self)}" title="${visLabel(self)}">${self ? ICON.eye : ICON.eyeOff}</button>`;
+  const note = (text) => (text ? `<p class="private-note">${ICON.eyeOffSmall} ${esc(text)}</p>` : '');
+  const cardNote = (c) => (c.priv ? (c.selfHidden ? 'Видна только тебе.' : 'Видна только тебе: все её коллекции скрыты.') : '');
+  const colNote = (c) => (c.priv ? (c.selfHidden ? 'Видна только тебе.' : 'Видна только тебе: скрыта коллекция, в которой она лежит.') : '');
+
+  function articleHTML(c) {
+    const cols = c.collections.map((id) => model.colById.get(id)).filter(Boolean).map((k) =>
+      `<a href="${BASE}col/${encodeURIComponent(k.id)}/"><span class="mono">${esc(k.num)}</span> ${esc(k.parentCol ? `${k.parentCol.name} / ${k.name}` : k.name)}</a>`);
     const facts = [
       cols.length && ['Коллекции', `<span class="fact-list">${cols.join('')}</span>`],
-      card.created && ['Добавлено', `<span class="mono">${fmtDate(card.created)}</span>`],
-      (card.tags || []).length && ['Теги', `<span class="tags">${card.tags.map((t) =>
+      c.created && ['Добавлено', `<span class="mono">${fmtDate(c.created)}</span>`],
+      c.tags.length && ['Теги', `<span class="tags">${c.tags.map((t) =>
         `<a class="tag tag--${tagTone(t)}" href="${BASE}?q=${encodeURIComponent('#' + t)}" data-tag="${esc(t)}">${esc(t)}</a>`).join('')}</span>`],
-      card.link && ['Источник', `<a href="${esc(card.link)}" rel="noopener">${esc(hostOf(card.link))} ↗</a>`],
+      c.link && ['Источник', `<a href="${esc(c.link)}" rel="noopener">${esc(hostOf(c.link))} ↗</a>`],
     ].filter(Boolean);
-    const files = (card.files || []).map((f) => {
+    const files = c.files.map((f) => {
       const up = f.kind === 'upload';
       const url = up && f.driveId ? `https://drive.google.com/uc?export=download&id=${encodeURIComponent(f.driveId)}` : f.url;
       return `<a class="file" href="${esc(url)}" rel="noopener"${up ? '' : ' target="_blank"'}>
@@ -344,17 +336,18 @@
 <span class="file-icon" aria-label="${up ? 'Скачать' : 'Открыть на Drive'}">${up ? ICON.down : ICON.ext}</span>
 </a>`;
     });
-    const cover = card.cover ? `<img src="${driveImg(card.cover, 1600)}" alt="${esc(card.title)}" referrerpolicy="no-referrer">` : '';
-    return `<article class="card" data-num="${pad3(card.id)}" data-id="${card.id}" data-title="${esc(card.title)}">
+    const cover = c.cover ? `<img src="${imgSrc(c.cover, 1600)}" alt="${esc(c.title)}" referrerpolicy="no-referrer">` : '';
+    return `<article class="card" data-num="${pad3(c.id)}" data-id="${c.id}" data-title="${esc(c.title)}">
 <figure class="card-cover${cover ? '' : ' card-cover--empty'}">${cover}</figure>
 <div class="title-row card-title-row">
-<h1 class="card-title" data-title-text>${esc(card.title)}</h1>
-<button class="icon-btn" type="button" data-rename="card" data-id="${card.id}" data-admin hidden aria-label="Переименовать карточку">${ICON.pencil}</button>
+<h1 class="card-title" data-title-text>${esc(c.title)}</h1>
+<button class="icon-btn" type="button" data-rename="card" data-id="${c.id}" data-admin hidden aria-label="Переименовать карточку">${ICON.pencil}</button>
 </div>
+${note(cardNote(c))}
 ${facts.length ? `<dl class="facts">${facts.map(([k, v]) => `<div class="fact"><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` : ''}
-${card.description ? `<section class="card-desc"><h2 class="section-label">Описание</h2>${richText(card.description)}</section>` : ''}
-${files.length ? `<section class="card-files"><div class="bar"><h2 class="bar-label">Файлы</h2><span>${String(files.length).padStart(2, '0')}</span></div>${files.join('\n')}</section>` : ''}
-<p class="card-path">/c/${pad3(card.id)}</p>
+${c.description ? `<section class="card-desc"><h2 class="section-label">Описание</h2>${richText(c.description)}</section>` : ''}
+${files.length ? `<section class="card-files"><div class="bar"><h2 class="bar-label">Файлы</h2><span>${pad2(files.length)}</span></div>${files.join('\n')}</section>` : ''}
+<p class="card-path">/c/${pad3(c.id)}</p>
 </article>`;
   }
 
@@ -370,306 +363,217 @@ ${chips}
 </div>
 </div>
 <div class="grid-wrap"><div class="grid" data-grid data-view="grid">
-${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
+${cards.map(tileHTML).join('\n')}
 </div></div>
 <p class="empty" data-empty${cards.length ? ' hidden' : ''}>${cards.length ? 'Ничего не найдено. Попробуйте другое слово.' : 'Карточек пока нет.'}</p>
 </section>`;
   }
 
-  // ═════════ Скрытые карточки и коллекции ═════════
-
-  const HIDDEN_CACHE = 'library:hidden-cache';
-  let hidden = { collections: [], cards: [], memberships: {} };
-  const hiddenCardById = () => new Map(hidden.cards.map((c) => [String(c.id), c]));
-  const hiddenColById = () => new Map(hidden.collections.map((c) => [c.id, c]));
-  let privateReady = Promise.resolve();
-
-  // Карточки, которые админ видит, но которых нет в сборке: скрытые + только что открытые
-  function clientCards() {
-    const list = hidden.cards.map((c) => Object.assign({}, c, { _priv: true }));
-    for (const k in transit) {
-      if (k.startsWith('card:') && !list.some((c) => String(c.id) === k.slice(5))) {
-        list.push(Object.assign({}, transit[k].data, { _priv: false }));
-      }
-    }
-    return list;
-  }
-  function clientCols() {
-    const list = hidden.collections.filter((c) => !deletedCols[c.id]).map((c) => Object.assign({}, c, { _priv: true }));
-    for (const k in transit) {
-      if (k.startsWith('col:') && !list.some((c) => c.id === k.slice(4))) {
-        list.push(Object.assign({}, transit[k].data, { _priv: false }));
-      }
-    }
-    return list;
+  function navRowsHTML(active) {
+    return model.ordered.map((c) => {
+      const on = c.id === active;
+      return `<a class="crow${c.parentCol ? ' crow--sub' : ''}${c.priv ? ' crow--private' : ''}${on ? ' is-active' : ''}" href="${BASE}col/${encodeURIComponent(c.id)}/" data-col="${esc(c.id)}"${c.parentCol ? ` data-parent="${esc(c.parentCol.id)}"` : ''}${c.priv ? ' data-private="1"' : ''}${on ? ' aria-current="page"' : ''}>
+<span class="crow-num">${esc(c.num)}</span><span class="crow-name">${esc(c.name)}</span><span class="crow-count">${c.priv ? `<span class="crow-flag" aria-label="скрыта">${ICON.eyeOffSmall}</span>` : ''}${c.cards.length}</span>
+</a>`;
+    }).join('\n');
   }
 
-  function markTile(tile, priv) {
-    tile.classList.toggle('tile--private', priv);
-    if (priv) tile.dataset.private = '1';
-    else delete tile.dataset.private;
+  function colPageHTML(c) {
+    const parent = c.parentCol;
+    const crumbs = parent
+      ? `<a href="${BASE}">Коллекции</a> / <a href="${BASE}col/${encodeURIComponent(parent.id)}/">${esc(parent.num)}</a> / ${esc(c.num)}`
+      : `<a href="${BASE}">Коллекции</a> / ${esc(c.num)}`;
+    const meta = [nCards(c.cards.length), c.children.length ? nSubs(c.children.length) : ''].filter(Boolean).join(' · ');
+    const chips = c.children.length && c.cards.length
+      ? `<div class="chips" role="group" aria-label="Подколлекции">
+<button class="chip" type="button" data-filter="" aria-pressed="true">Все <span class="chip-n">${c.cards.length}</span></button>
+${c.children.map((k) => `<button class="chip" type="button" data-filter="${esc(k.id)}" aria-pressed="false"><span class="chip-n">${esc(k.num)}</span> <span class="chip-name">${esc(k.name)}</span> <span class="chip-n">${k.cards.length}</span></button>`).join('\n')}
+</div>`
+      : '';
+    // Подколлекция, скрытая вместе с родителем, своей галочкой не управляется
+    const canToggle = !(c.priv && !c.selfHidden && parent);
+    return `<section class="hero hero--col">
+<p class="crumbs">${crumbs}</p>
+<div class="title-row">
+<h1 class="hero-title" data-title-text>${esc(c.name)}</h1>
+<div class="title-actions">
+${canToggle ? visBtn('collection', c.id, c.selfHidden) : ''}
+<button class="icon-btn" type="button" data-rename="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Изменить название и описание коллекции">${ICON.pencil}</button>
+<button class="icon-btn" type="button" data-delete-col data-id="${esc(c.id)}" data-admin hidden aria-label="Удалить коллекцию">${ICON.trash}</button>
+</div>
+</div>
+${note(colNote(c))}
+<p class="lede" data-col-desc${c.description ? '' : ' hidden'}>${esc(c.description || '')}</p>
+<p class="meta">${esc(meta)}</p>
+${parent ? '' : `<div class="col-admin col-admin--hero" data-admin hidden><button class="link-btn" type="button" data-new-col data-parent="${esc(c.id)}">+ Подколлекция</button></div>`}
+</section>
+${cardListHTML(c.cards, 'Карточки', chips)}`;
   }
 
-  function markRow(row, priv) {
-    row.classList.toggle('crow--private', priv);
-    if (priv) row.dataset.private = '1';
-    else delete row.dataset.private;
-    let flag = $('.crow-flag', row);
-    if (priv && !flag) {
-      flag = document.createElement('span');
-      flag.className = 'crow-flag';
-      flag.innerHTML = ICON.eyeOffSmall;
-      flag.setAttribute('aria-label', 'скрыта');
-      $('.crow-count', row).prepend(flag);
-    } else if (!priv && flag) {
-      flag.remove();
-    }
+  function cardPageHTML(c) {
+    return `<div class="card-page">
+<div class="card-bar">
+<span class="card-bar-num">№ ${pad3(c.id)}</span>
+<div class="card-bar-actions">
+<a class="icon-btn" href="${BASE}admin/?edit=${c.id}" data-edit data-admin hidden aria-label="Редактировать карточку">${ICON.edit}</a>
+${visBtn('card', c.id, c.selfHidden)}
+<button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${ICON.trash}</button>
+<button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${ICON.link}</button>
+<a class="icon-btn" href="${BASE}" aria-label="Закрыть">${ICON.close}</a>
+</div>
+</div>
+${articleHTML(c)}
+</div>`;
   }
 
-  function placeRow(nav, c) {
-    let row = $(`[data-col="${sel(c.id)}"]`, nav);
-    if (row && row.tagName === 'DIV') { row.remove(); row = null; } // «скоро» — заменяем ссылкой
-    if (!row) {
-      row = document.createElement('a');
-      row.className = 'crow' + (c.parent ? ' crow--sub' : '');
-      row.href = `${BASE}col/${encodeURIComponent(c.id)}/`;
-      row.dataset.col = c.id;
-      row.dataset.client = '1';
-      if (c.parent) row.dataset.parent = c.parent;
-      let num;
-      if (c.parent) {
-        const parentRow = $(`[data-col="${sel(c.parent)}"]`, nav);
-        if (!parentRow) return;
-        const kids = $$(`[data-parent="${sel(c.parent)}"]`, nav);
-        num = $('.crow-num', parentRow).textContent + '.' + (kids.length + 1);
-        (kids[kids.length - 1] || parentRow).after(row);
-      } else {
-        num = String($$('[data-col]:not(.crow--sub)', nav).length + 1).padStart(2, '0');
-        nav.append(row);
-      }
-      row.innerHTML = '<span class="crow-num"></span><span class="crow-name"></span><span class="crow-count"></span>';
-      $('.crow-num', row).textContent = num;
-      $('.crow-name', row).textContent = c.name;
-      const empty = $('.empty', nav);
-      if (empty) empty.remove();
-      if (location.pathname === row.pathname) {
-        row.classList.add('is-active');
-        row.setAttribute('aria-current', 'page');
-      }
-    }
-    markRow(row, !!c._priv);
+  // ═════════ Отрисовка из свежих данных ═════════
+
+  function setVisButton(btn, c) {
+    if (!btn || !c) return;
+    btn.innerHTML = c.selfHidden ? ICON.eye : ICON.eyeOff;
+    btn.setAttribute('aria-label', visLabel(c.selfHidden));
+    btn.title = visLabel(c.selfHidden);
   }
 
   function renderNavs() {
-    const cols = clientCols();
-    for (const nav of $$('.side nav, .index-inline nav')) {
-      // Скрытые, которые уже есть в сборке (скрыли только что), — просто помечаем
-      $$('a.crow[data-col]', nav).forEach((row) => {
-        const h = cols.find((c) => c.id === row.dataset.col);
-        if (h) markRow(row, !!h._priv);
-      });
-      cols.filter((c) => !c.parent).forEach((c) => placeRow(nav, c));
-      cols.filter((c) => c.parent).forEach((c) => placeRow(nav, c));
-      // «скоро» для новых публичных коллекций
-      for (const id in newCols) {
-        if ($(`[data-col="${sel(id)}"]`, nav)) continue;
-        const c = newCols[id];
-        if (c.parent && !$(`[data-col="${sel(c.parent)}"]`, nav)) continue;
-        const row = document.createElement('div');
-        row.className = 'crow crow--pending' + (c.parent ? ' crow--sub' : '');
-        row.dataset.col = id;
-        if (c.parent) row.dataset.parent = c.parent;
-        let num;
-        if (c.parent) {
-          const parentRow = $(`[data-col="${sel(c.parent)}"]`, nav);
-          const kids = $$(`[data-parent="${sel(c.parent)}"]`, nav);
-          num = $('.crow-num', parentRow).textContent + '.' + (kids.length + 1);
-          (kids[kids.length - 1] || parentRow).after(row);
-        } else {
-          num = String($$('[data-col]:not(.crow--sub)', nav).length + 1).padStart(2, '0');
-          nav.append(row);
-        }
-        row.innerHTML = '<span class="crow-num"></span><span class="crow-name"></span><span class="crow-count">скоро</span>';
-        $('.crow-num', row).textContent = num;
-        $('.crow-name', row).textContent = c.name;
-        row.title = 'Страница коллекции появится после обновления сайта';
-        const empty = $('.empty', nav);
-        if (empty) empty.remove();
+    const active = ROUTE.type === 'col' ? ROUTE.id : null;
+    const side = $('.side nav');
+    if (side) {
+      $$('[data-col], .crow--pending', side).forEach((r) => r.remove());
+      const all = $('a.crow', side);
+      if (all) {
+        $('.crow-count', all).textContent = model.cards.length;
+        all.insertAdjacentHTML('afterend', navRowsHTML(active));
+      } else {
+        side.insertAdjacentHTML('beforeend', navRowsHTML(active));
       }
+    }
+    const inline = $('.index-inline nav');
+    if (inline) {
+      inline.innerHTML = model.ordered.length ? navRowsHTML(active) : '<p class="empty empty--tight">Коллекций пока нет.</p>';
+      const count = $('.index-inline .bar > span:last-child');
+      if (count) count.textContent = pad2(model.tops.length);
     }
   }
 
-  // Какие из скрытых карточек относятся к текущему списку
-  function listScope() {
-    if (BODY.classList.contains('page-home')) return { all: true };
-    const id = BODY.dataset.colId;
-    if (!id) return null;
-    return { ids: new Set([id, ...childIds(id)]) };
-  }
-
-  function renderTiles() {
-    const scope = listScope();
-    if (!scope) return;
-    const cards = clientCards().filter((c) => {
-      if (scope.all) return true;
-      const cols = (c.collections || []).concat(hidden.memberships[c.id] || []);
-      return cols.some((x) => scope.ids.has(x));
-    });
-    if (!cards.length) return;
-
-    let list = $('section.list');
-    if (list && !$('[data-grid]', list)) {
-      const label = $('.bar-label', list).textContent;
+  function renderMain() {
+    const main = $('#main');
+    if (ROUTE.type === 'home') {
+      const list = $('section.list', main);
       const tmp = document.createElement('div');
-      tmp.innerHTML = cardListHTML([], label);
+      tmp.innerHTML = cardListHTML(model.cards, 'Все карточки');
       const fresh = tmp.firstElementChild;
-      list.replaceWith(fresh);
-      list = fresh;
-      initList(list);
+      if (list) list.replaceWith(fresh); else main.append(fresh);
+      initList(fresh);
+    } else if (ROUTE.type === 'col') {
+      const c = model.colById.get(ROUTE.id);
+      if (!c) { notFound(main, 'Коллекции больше нет. Возможно, её удалили.'); return; }
+      BODY.classList.remove('page-404');
+      BODY.classList.add('page-col');
+      document.title = `${c.name} — ${SITE_TITLE}`;
+      main.innerHTML = colPageHTML(c);
+      initList($('[data-list]', main));
+    } else if (ROUTE.type === 'card') {
+      const c = model.cardById.get(ROUTE.id);
+      if (!c) { notFound(main, 'Карточки больше нет. Возможно, её удалили.'); return; }
+      BODY.classList.remove('page-404');
+      BODY.classList.add('page-card');
+      document.title = `${c.title} — ${SITE_TITLE}`;
+      main.innerHTML = cardPageHTML(c);
     }
-    if (!list) return;
-    const grid = $('[data-grid]', list);
-    for (const c of cards) {
-      const existing = $(`a.tile[data-id="${sel(c.id)}"]`, grid);
-      if (existing) { markTile(existing, c._priv); continue; }
-      const tmp = document.createElement('div');
-      tmp.innerHTML = tileHTML(c, c._priv);
-      const tile = tmp.firstElementChild;
-      const after = $$('a.tile', grid).find((t) => Number(t.dataset.id) < Number(c.id));
-      if (after) grid.insertBefore(tile, after);
-      else grid.append(tile);
-    }
-    // Публичные плитки, скрытые только что, помечаем
-    $$('a.tile:not([data-client])', grid).forEach((t) => {
-      if (!cards.some((c) => String(c.id) === t.dataset.id)) {
-        const h = hiddenCardById().get(t.dataset.id);
-        if (h) markTile(t, true);
-      }
-    });
-    applyAllRenames(grid);
+  }
+
+  function notFound(main, text) {
+    if (BODY.classList.contains('page-404')) return; // настоящая 404 уже на месте
+    main.innerHTML = `<section class="hero"><h1 class="hero-title">Нет такой страницы</h1><p class="lede">${esc(text)}</p><p><a class="link" href="${BASE}">Перейти ко всем карточкам</a></p></section>`;
+  }
+
+  function renderSheet() {
+    if (!sheetCardId || !BODY.classList.contains('sheet-open')) return;
+    const c = model.cardById.get(sheetCardId);
+    if (!c) { if (closeSheet) closeSheet(); return; }
+    const body = $('[data-sheet-body]');
+    const scroll = $('[data-sheet]').scrollTop;
+    body.innerHTML = articleHTML(c);
+    const h = $('h1', body);
+    if (h) h.id = 'sheet-title';
+    setVisButton($('[data-sheet] [data-visibility]'), c);
+    showAdmin(body);
+    $('[data-sheet]').scrollTop = scroll;
+  }
+
+  // Пока открыто поле правки, страницу не перерисовываем — иначе пропадёт набранный текст
+  let pendingRender = false;
+  const editing = () => !!$('.rename-form, .mini-form');
+  function flushRender() {
+    if (pendingRender && !editing()) { pendingRender = false; renderAll(); }
+  }
+
+  function renderAll() {
+    if (!model) return;
+    if (editing()) { pendingRender = true; return; }
+    renderNavs();
+    renderMain();
+    renderSheet();
+    showAdmin();
     applyAll();
   }
 
-  function renderPrivate() {
-    renderNavs();
-    hideDeletedCols();
-    applyAllRenames();
-    renderTiles();
-    updateVisibilityUI();
+  let liveTs = '';
+  function useLive(data) {
+    // Ответы могут прийти не по порядку: старше показанного — пропускаем
+    const ts = (data.public && data.public.generatedAt) || '';
+    if (liveTs && ts && ts < liveTs) return;
+    if (ts) liveTs = ts;
+    const json = JSON.stringify(data);
+    store.set(LIVE_STORE, JSON.stringify({ ts: Date.now(), data }));
+    if (json === liveJSON) return;
+    liveJSON = json;
+    model = buildModel(data);
+    renderAll();
   }
 
-  async function fetchHidden() {
-    const data = await api('listHidden');
-    hidden = { collections: data.collections || [], cards: data.cards || [], memberships: data.memberships || {} };
-    saveHiddenCache();
-  }
-  function saveHiddenCache() {
-    try { sessionStorage.setItem(HIDDEN_CACHE, JSON.stringify({ ts: Date.now(), hidden })); } catch {}
-  }
-
-  function loadPrivate() {
-    if (!adminKey) return Promise.resolve();
+  async function startLive() {
+    if (!adminKey) return;
     try {
-      const c = JSON.parse(sessionStorage.getItem(HIDDEN_CACHE) || 'null');
-      if (c && Date.now() - c.ts < 5 * 60 * 1000) {
-        hidden = c.hidden;
-        renderPrivate();
-        fetchHidden().then(renderPrivate).catch(() => {});
-        return Promise.resolve();
-      }
+      const built = await fetch(`${BASE}data.json`).then((r) => r.json());
+      builtCovers = new Set([...(built.cards || []), ...(built.collections || [])].map((x) => x.cover).filter(Boolean));
     } catch {}
-    return fetchHidden().then(renderPrivate).catch((err) => say(err.message));
+    // Сразу — из сохранённого, затем тихо обновляем
+    try {
+      const cached = JSON.parse(store.get(LIVE_STORE) || 'null');
+      if (cached && cached.data && Date.now() - cached.ts < 7 * 24 * 3600 * 1000) useLive(cached.data);
+    } catch {}
+    try {
+      const r = await api('listAll');
+      useLive({ public: r.public, hidden: r.hidden });
+    } catch (err) {
+      say(err.message);
+    }
+  }
+
+  // Все правки: запрос с withLive — скрипт сразу возвращает свежие данные
+  async function write(action, payload) {
+    const r = await api(action, Object.assign({ withLive: true }, payload));
+    if (r.live) useLive(r.live);
+    return r;
   }
 
   // ═════════ Видимость ═════════
 
-  function cardVisibility(id) {
-    const h = hiddenCardById().get(String(id));
-    if (!h) return { priv: false, self: false };
-    return { priv: true, self: !!h.selfHidden };
-  }
-  function colVisibility(id) {
-    const h = hiddenColById().get(id);
-    if (!h) return { priv: false, self: false };
-    return { priv: true, self: !!h.selfHidden };
-  }
-
-  function setVisButton(btn, v) {
-    btn.innerHTML = v.self ? ICON.eye : ICON.eyeOff;
-    const label = v.self ? 'Показать всем' : 'Скрыть от всех';
-    btn.setAttribute('aria-label', label);
-    btn.title = label;
-  }
-
-  function setNote(after, text) {
-    let note = after.parentElement.querySelector(':scope > .private-note');
-    if (!text) { if (note) note.remove(); return; }
-    if (!note) {
-      note = document.createElement('p');
-      note.className = 'private-note';
-      after.after(note);
-    }
-    note.innerHTML = ICON.eyeOffSmall + ' ';
-    note.append(text);
-  }
-
-  function updateVisibilityUI() {
-    if (!adminKey) return;
-    $$('article.card').forEach((a) => {
-      const v = cardVisibility(a.dataset.id);
-      const row = $('.title-row', a);
-      setNote(row, v.priv ? (v.self ? 'Видна только тебе.' : 'Видна только тебе: все её коллекции скрыты.') : '');
-      const bar = a.closest('[data-sheet]') || a.closest('.card-page');
-      const btn = bar && $('[data-visibility="card"]', bar);
-      if (btn) setVisButton(btn, v);
-    });
-    $$('[data-visibility="collection"]').forEach((btn) => {
-      const id = btn.dataset.id;
-      const v = colVisibility(id);
-      setVisButton(btn, v);
-      const row = btn.closest('.title-row');
-      const parent = colInfo(id)?.parent;
-      setNote(row, v.priv ? (v.self ? 'Видна только тебе.' : 'Видна только тебе: скрыта коллекция, в которой она лежит.') : '');
-      if (parent && !v.self && v.priv) btn.hidden = true;
-    });
-  }
-
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-visibility]');
-    if (!btn || !adminKey) return;
+    if (!btn || !adminKey || !model) return;
     const kind = btn.dataset.visibility;
-    let id;
-    let v;
-    if (kind === 'card') {
-      const a = $('article.card', btn.closest('[data-sheet]') || document);
-      if (!a) return;
-      id = a.dataset.id;
-      v = cardVisibility(id);
-    } else {
-      id = btn.dataset.id;
-      v = colVisibility(id);
-    }
-    const nextHidden = !v.self;
+    const id = kind === 'card' ? Number(btn.dataset.id || sheetCardId) : btn.dataset.id;
+    const item = kind === 'card' ? model.cardById.get(id) : model.colById.get(id);
+    if (!item) return;
+    const next = !item.selfHidden;
     btn.disabled = true;
-    const before = { cards: hiddenCardById(), cols: hiddenColById() };
     try {
-      await api('setHidden', { kind, id, hidden: nextHidden });
-      await fetchHidden();
-      // Что стало публичным, но ещё не собрано, держим видимым для админа
-      const nowCards = hiddenCardById();
-      const nowCols = hiddenColById();
-      for (const [cid, c] of before.cards) {
-        if (!nowCards.has(cid) && !$(`a.tile[data-id="${sel(cid)}"]:not([data-client])`)) transit['card:' + cid] = { ts: Date.now(), data: c };
-        if (!nowCards.has(cid)) $$(`a.tile[data-id="${sel(cid)}"]`).forEach((t) => markTile(t, false));
-      }
-      for (const [cid, c] of before.cols) {
-        if (!nowCols.has(cid) && !$(`a.crow[data-col="${sel(cid)}"]:not([data-client])`)) transit['col:' + cid] = { ts: Date.now(), data: c };
-        if (!nowCols.has(cid)) $$(`a.crow[data-col="${sel(cid)}"]`).forEach((r) => markRow(r, false));
-      }
-      saveStore('library:transit', transit);
-      renderPrivate();
+      await write('setHidden', { kind, id, hidden: next });
       const what = kind === 'card' ? 'Карточка' : 'Коллекция';
-      say(nextHidden ? `${what} скрыта. Теперь её видишь только ты` : `${what} снова видна всем после обновления сайта`);
+      say(next ? `${what} скрыта. Теперь её видишь только ты` : `${what} открыта. Посетители увидят её через 1–2 минуты`);
     } catch (err) {
       say(err.message);
     } finally {
@@ -684,22 +588,16 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
     if (!btn || !adminKey) return;
     const article = $('article.card', btn.closest('[data-sheet]') || document);
     if (!article) return;
-    const id = article.dataset.id;
     const ok = window.confirm(`Удалить карточку № ${article.dataset.num} «${article.dataset.title}»?\n\nЗагруженные файлы уйдут в корзину Google Drive, оттуда их можно восстановить в течение 30 дней. Файлы, добавленные ссылкой, останутся на месте.`);
     if (!ok) return;
     btn.disabled = true;
     try {
-      await api('deleteCard', { id: Number(id) });
-      deleted[id] = { ts: Date.now() };
-      saveStore('library:deleted', deleted);
-      hidden.cards = hidden.cards.filter((c) => String(c.id) !== id);
-      delete transit['card:' + id];
-      saveStore('library:transit', transit);
-      if (btn.closest('[data-sheet]')) {
-        if (closeSheet) closeSheet();
-        applyAll();
-        say('Карточка удалена. Сайт обновится через 1–2 минуты');
-      } else {
+      const inSheet = !!btn.closest('[data-sheet]');
+      if (inSheet && closeSheet) closeSheet();
+      await write('deleteCard', { id: Number(article.dataset.id) });
+      if (inSheet) say('Карточка удалена');
+      else {
+        try { sessionStorage.setItem('library:flash', 'Карточка удалена'); } catch {}
         location.href = BASE;
       }
     } catch (err) {
@@ -713,24 +611,18 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
 
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-delete-col]');
-    if (!btn || !adminKey) return;
-    const id = btn.dataset.id;
-    const info = colInfo(id);
-    const kids = childIds(id);
-    const isSub = !!(info && info.parent);
-    const name = info ? info.name : id;
-    const inner = kids.length ? ` и ${kids.length} ${plural(kids.length, 'подколлекцию', 'подколлекции', 'подколлекций')} внутри неё` : '';
-    const ok = window.confirm(`Удалить ${isSub ? 'подколлекцию' : 'коллекцию'} «${name}»${inner}?\n\nКарточки не удалятся: они останутся во «Всех карточках» и в других своих коллекциях. Карточки, которые были скрыты вместе с этой коллекцией, так и останутся скрытыми.`);
+    if (!btn || !adminKey || !model) return;
+    const c = model.colById.get(btn.dataset.id);
+    if (!c) return;
+    const isSub = !!c.parentCol;
+    const inner = c.children.length ? ` и ${nSubs(c.children.length).replace('подколлекция', 'подколлекцию')} внутри неё` : '';
+    const ok = window.confirm(`Удалить ${isSub ? 'подколлекцию' : 'коллекцию'} «${c.name}»${inner}?\n\nКарточки не удалятся: они останутся во «Всех карточках» и в других своих коллекциях. Карточки, которые были скрыты вместе с этой коллекцией, так и останутся скрытыми.`);
     if (!ok) return;
     btn.disabled = true;
     try {
-      const r = await api('deleteCollection', { id });
-      (r.deleted || [id]).forEach((x) => { deletedCols[x] = { ts: Date.now() }; });
-      saveStore('library:deletedcols', deletedCols);
-      hidden.collections = hidden.collections.filter((c) => !(r.deleted || [id]).includes(c.id));
-      saveHiddenCache();
-      try { sessionStorage.setItem('library:flash', `${isSub ? 'Подколлекция удалена' : 'Коллекция удалена'}. Сайт обновится через 1–2 минуты`); } catch {}
-      location.href = isSub ? `${BASE}col/${encodeURIComponent(info.parent)}/` : BASE;
+      await write('deleteCollection', { id: c.id });
+      try { sessionStorage.setItem('library:flash', isSub ? 'Подколлекция удалена' : 'Коллекция удалена'); } catch {}
+      location.href = isSub ? `${BASE}col/${encodeURIComponent(c.parentCol.id)}/` : BASE;
     } catch (err) {
       btn.disabled = false;
       say(err.message);
@@ -767,7 +659,7 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
     btns.innerHTML = '<button class="rename-save" type="submit">Сохранить</button><button class="rename-cancel" type="button">Отмена</button>';
 
     let textarea = null;
-    const lede = kind === 'collection' ? $(`[data-col-desc="${sel(id)}"]`) : null;
+    const lede = kind === 'collection' ? $('[data-col-desc]', row.parentElement) : null;
     if (lede) {
       const dl = document.createElement('label');
       dl.className = 'rename-label';
@@ -795,7 +687,7 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       if (lede) lede.hidden = !lede.textContent.trim();
       heading.hidden = false;
       actions.hidden = false;
-      btn.focus({ preventScroll: true });
+      flushRender();
     };
     $('.rename-cancel', form).addEventListener('click', finish);
     form.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(); } });
@@ -808,18 +700,10 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       const save = $('.rename-save', form);
       save.disabled = true;
       try {
-        if (kind === 'card') await api('renameCard', { id: Number(id), title: name });
-        else await api('updateCollection', { id, name, description });
-        const entry = { name, ts: Date.now() };
-        if (textarea) entry.description = description;
-        renames[`${kind}:${id}`] = entry;
-        saveStore('library:renames', renames);
-        applyRename(kind, id, entry);
-        // Скрытые хранятся в кэше — обновим и там
-        const hc = kind === 'card' ? hidden.cards.find((c) => String(c.id) === id) : hidden.collections.find((c) => c.id === id);
-        if (hc) { if (kind === 'card') hc.title = name; else { hc.name = name; hc.description = description; } }
-        finish();
-        say('Сохранено. Сайт обновится через 1–2 минуты');
+        if (kind === 'card') await write('renameCard', { id: Number(id), title: name });
+        else await write('updateCollection', { id, name, description });
+        if (form.isConnected) finish();
+        say('Сохранено');
       } catch (err) {
         save.disabled = false;
         say(err.message);
@@ -829,17 +713,10 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
 
   // ═════════ Новые коллекции ═════════
 
-  function topCollections() {
-    return $$('.side nav [data-col]:not(.crow--sub):not(.crow--pending)').map((r) => ({
-      id: r.dataset.col,
-      label: `${$('.crow-num', r).textContent} ${$('.crow-name', r).textContent}`,
-    }));
-  }
-
-  function field(labelText, control, cls = 'field') {
-    const wrap = document.createElement(cls === 'check' ? 'label' : 'div');
-    wrap.className = cls;
-    if (cls === 'check') {
+  function field(labelText, control, check = false) {
+    const wrap = document.createElement(check ? 'label' : 'div');
+    wrap.className = check ? 'check' : 'field';
+    if (check) {
       wrap.append(control, document.createTextNode(' ' + labelText));
       return wrap;
     }
@@ -875,12 +752,14 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       parentSelect = document.createElement('select');
       parentSelect.className = 'mini-input';
       parentSelect.add(new Option('Нет, верхний уровень', ''));
-      topCollections().forEach((c) => parentSelect.add(new Option(c.label, c.id)));
+      const tops = model ? model.tops.map((c) => ({ id: c.id, label: `${c.num} ${c.name}` }))
+        : $$('.side nav [data-col]:not(.crow--sub)').map((r) => ({ id: r.dataset.col, label: `${$('.crow-num', r).textContent} ${$('.crow-name', r).textContent}` }));
+      tops.forEach((c) => parentSelect.add(new Option(c.label, c.id)));
       form.append(field('Внутри коллекции', parentSelect));
     }
     const priv = document.createElement('input');
     priv.type = 'checkbox';
-    form.append(field('Видна только мне', priv, 'check'));
+    form.append(field('Видна только мне', priv, true));
 
     const btns = document.createElement('div');
     btns.className = 'rename-btns';
@@ -891,7 +770,7 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
     holder.append(form);
     name.focus();
 
-    const finish = () => { form.remove(); btn.hidden = false; };
+    const finish = () => { form.remove(); btn.hidden = false; flushRender(); };
     $('.rename-cancel', form).addEventListener('click', finish);
     form.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(); } });
     form.addEventListener('submit', async (ev) => {
@@ -902,16 +781,9 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       const save = $('.rename-save', form);
       save.disabled = true;
       try {
-        const r = await api('createCollection', { name: n, description: desc.value.trim(), parent, hidden: priv.checked });
-        if (priv.checked || colVisibility(parent).priv) {
-          await fetchHidden(); // скрытая видна админу сразу, без пересборки
-        } else {
-          newCols[r.collection.id] = { name: n, parent, ts: Date.now() };
-          saveStore('library:newcols', newCols);
-        }
-        renderPrivate();
-        finish();
-        say(priv.checked ? 'Скрытая коллекция создана' : 'Коллекция создана. Её страница появится через 1–2 минуты');
+        await write('createCollection', { name: n, description: desc.value.trim(), parent, hidden: priv.checked });
+        if (form.isConnected) finish();
+        say(parent ? 'Подколлекция создана' : 'Коллекция создана');
       } catch (err) {
         save.disabled = false;
         say(err.message);
@@ -933,20 +805,16 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
     let lastTile = null;
     let hideTimer;
 
-    const idFromUrl = (url) => { const m = new URL(url, location.href).pathname.match(/\/c\/(\d+)\/?$/); return m ? String(Number(m[1])) : null; };
-
-    function clientArticle(url) {
-      const id = idFromUrl(url);
-      const c = id && clientCards().find((x) => String(x.id) === id);
-      if (!c) return null;
-      const tmp = document.createElement('div');
-      tmp.innerHTML = articleHTML(c);
-      return { article: tmp.firstElementChild, title: `${c.title} — ${SITE_TITLE}` };
-    }
+    const idFromUrl = (url) => { const m = new URL(url, location.href).pathname.match(/\/c\/(\d+)\/?$/); return m ? Number(m[1]) : null; };
 
     function load(url) {
-      const local = clientArticle(url);
-      if (local) return Promise.resolve(local);
+      const id = idFromUrl(url);
+      const live = model && id && model.cardById.get(id);
+      if (live) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = articleHTML(live);
+        return Promise.resolve({ article: tmp.firstElementChild, title: `${live.title} — ${SITE_TITLE}`, card: live });
+      }
       if (!cache.has(url)) {
         cache.set(url, fetch(url)
           .then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); })
@@ -956,13 +824,7 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
             if (!article) throw new Error('no card');
             return { article, title: doc.title };
           })
-          .catch(async (err) => {
-            cache.delete(url);
-            await privateReady;
-            const again = clientArticle(url);
-            if (again) return again;
-            throw err;
-          }));
+          .catch((err) => { cache.delete(url); throw err; }));
       }
       return cache.get(url);
     }
@@ -975,14 +837,18 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       const h = $('h1', article);
       if (h) h.id = 'sheet-title';
       body.replaceChildren(article);
-      showAdmin(sheet);
-      applyAllRenames(article);
+      sheetCardId = Number(article.dataset.id);
       num.textContent = '№ ' + (article.dataset.num || '');
       copyBtn.dataset.copy = url;
-      const editLink = $('[data-edit]', sheet);
-      if (editLink) editLink.href = `${BASE}admin/?edit=${article.dataset.id}`;
+      const edit = $('[data-edit]', sheet);
+      if (edit) edit.href = `${BASE}admin/?edit=${article.dataset.id}`;
+      const vis = $('[data-visibility]', sheet);
+      if (vis) {
+        vis.dataset.id = article.dataset.id;
+        setVisButton(vis, data.card || (model && model.cardById.get(sheetCardId)) || { selfHidden: false });
+      }
+      showAdmin(sheet);
       document.title = data.title;
-      updateVisibilityUI();
 
       sheet.hidden = false;
       backdrop.hidden = false;
@@ -997,12 +863,13 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
       BODY.classList.remove('sheet-open');
       document.title = listTitle;
       sheet.style.transform = '';
+      sheetCardId = null;
       hideTimer = setTimeout(() => {
         sheet.hidden = true;
         backdrop.hidden = true;
         body.replaceChildren();
       }, 300);
-      lastTile?.focus({ preventScroll: true });
+      if (lastTile && lastTile.isConnected) lastTile.focus({ preventScroll: true });
     }
 
     function close() {
@@ -1022,7 +889,8 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
     });
 
     const prefetch = (e) => {
-      const a = e.target.closest && e.target.closest('a.tile:not([data-client])');
+      if (model) return;
+      const a = e.target.closest && e.target.closest('a.tile');
       if (a) load(a.href).catch(() => {});
     };
     document.addEventListener('pointerover', prefetch, { passive: true });
@@ -1063,100 +931,8 @@ ${cards.map((c) => tileHTML(c, c._priv)).join('\n')}
     });
   }
 
-  // ═════════ Страницы скрытых: рисуем на месте «нет такой страницы» ═════════
-
-  async function renderNotFound() {
-    const holder = $('[data-not-found]');
-    if (!holder || !adminKey) return;
-    const rest = location.pathname.startsWith(BASE) ? location.pathname.slice(BASE.length) : '';
-    const mCard = rest.match(/^c\/(\d+)\/?$/);
-    const mCol = rest.match(/^col\/([^/]+)\/?$/);
-    if (!mCard && !mCol) return;
-    const original = holder.innerHTML;
-    holder.innerHTML = '<p class="empty">Загружаем…</p>';
-    await privateReady;
-
-    if (mCard) {
-      const c = clientCards().find((x) => String(x.id) === String(Number(mCard[1])));
-      if (!c) { holder.innerHTML = original; return; }
-      BODY.classList.remove('page-404');
-      BODY.classList.add('page-card');
-      document.title = `${c.title} — ${SITE_TITLE}`;
-      holder.innerHTML = `<div class="card-page">
-<div class="card-bar">
-<span class="card-bar-num">№ ${pad3(c.id)}</span>
-<div class="card-bar-actions">
-<a class="icon-btn" href="${BASE}admin/?edit=${c.id}" data-edit data-admin hidden aria-label="Редактировать карточку">${ICON.edit}</a>
-<button class="icon-btn" type="button" data-visibility="card" data-admin hidden aria-label="Скрыть от всех">${ICON.eyeOff}</button>
-<button class="icon-btn" type="button" data-delete data-admin hidden aria-label="Удалить карточку">${ICON.trash}</button>
-<button class="icon-btn" type="button" data-copy aria-label="Скопировать ссылку на карточку">${ICON.link}</button>
-<a class="icon-btn" href="${BASE}" aria-label="Закрыть">${ICON.close}</a>
-</div>
-</div>
-${articleHTML(c)}
-</div>`;
-      showAdmin(holder);
-      applyAllRenames(holder);
-      updateVisibilityUI();
-      return;
-    }
-
-    const id = decodeURIComponent(mCol[1]);
-    const col = clientCols().find((x) => x.id === id);
-    if (!col) { holder.innerHTML = original; return; }
-    const info = colInfo(id) || { num: '', parent: col.parent };
-    const parent = col.parent ? colInfo(col.parent) : null;
-    const ids = new Set([id, ...childIds(id)]);
-
-    let pub = [];
-    try {
-      const data = await fetch(`${BASE}data.json`).then((r) => r.json());
-      pub = (data.cards || []).filter((c) => (hidden.memberships[c.id] || []).some((x) => ids.has(x)) || (c.collections || []).some((x) => ids.has(x)));
-    } catch {}
-    const priv = clientCards().filter((c) => (c.collections || []).some((x) => ids.has(x)));
-    const cards = [...priv, ...pub.filter((p) => !priv.some((c) => c.id === p.id))]
-      .map((c) => Object.assign({}, c, { _priv: c._priv ?? false, collections: (c.collections || []).concat(hidden.memberships[c.id] || []) }))
-      .sort((a, b) => b.id - a.id);
-
-    BODY.classList.remove('page-404');
-    BODY.classList.add('page-col');
-    BODY.dataset.colId = id;
-    document.title = `${col.name} — ${SITE_TITLE}`;
-    const crumbs = parent
-      ? `<a href="${BASE}">Коллекции</a> / <a href="${BASE}col/${encodeURIComponent(parent.id)}/">${esc(parent.num)}</a> / ${esc(info.num)}`
-      : `<a href="${BASE}">Коллекции</a> / ${esc(info.num)}`;
-    holder.innerHTML = `<section class="hero hero--col">
-<p class="crumbs">${crumbs}</p>
-<div class="title-row">
-<h1 class="hero-title" data-title-text data-col-name="${esc(id)}">${esc(col.name)}</h1>
-<div class="title-actions">
-<button class="icon-btn" type="button" data-visibility="collection" data-id="${esc(id)}" data-admin hidden aria-label="Показать всем">${ICON.eye}</button>
-<button class="icon-btn" type="button" data-rename="collection" data-id="${esc(id)}" data-admin hidden aria-label="Изменить название и описание коллекции">${ICON.pencil}</button>
-<button class="icon-btn" type="button" data-delete-col data-id="${esc(id)}" data-admin hidden aria-label="Удалить коллекцию">${ICON.trash}</button>
-</div>
-</div>
-<p class="lede" data-col-desc="${esc(id)}"${col.description ? '' : ' hidden'}>${esc(col.description || '')}</p>
-<p class="meta">${esc(nCards(cards.length))}</p>
-${col.parent ? '' : `<div class="col-admin col-admin--hero" data-admin hidden><button class="link-btn" type="button" data-new-col data-parent="${esc(id)}">+ Подколлекция</button></div>`}
-</section>
-${cardListHTML(cards, 'Карточки')}`;
-    showAdmin(holder);
-    initList($('[data-list]', holder));
-    applyAllRenames();
-    updateVisibilityUI();
-    $$('.side nav a.crow').forEach((r) => {
-      const on = r.dataset.col === id;
-      r.classList.toggle('is-active', on);
-      if (on) r.setAttribute('aria-current', 'page'); else r.removeAttribute('aria-current');
-    });
-  }
-
   // ═════════ Старт ═════════
 
-  applyAllRenames();
-  renderNavs();
-  hideDeletedCols();
   applyAll();
-  privateReady = loadPrivate();
-  renderNotFound();
+  startLive();
 })();

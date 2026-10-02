@@ -324,8 +324,9 @@
     btn.disabled = true;
     setError(err, '');
     try {
-      const r = await api('createCollection', { name, parent, hidden: $('#nc-hidden').checked });
+      const r = await api('createCollection', { withLive: true, name, parent, hidden: $('#nc-hidden').checked });
       $('#nc-hidden').checked = false;
+      if (r.live) store.set('library:live', JSON.stringify({ ts: Date.now(), data: r.live }));
       await loadCollections();
       if (!state.cols.includes(r.collection.id)) state.cols.push(r.collection.id);
       renderCols();
@@ -652,7 +653,7 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
         : f.kind === 'drive'
           ? { kind: 'drive', url: f.url, title: f.title || '' }
           : { kind: 'upload', fileId: f.fileId, title: f.title || '' });
-      const r = EDIT_ID ? await api('updateCard', {
+      const r = EDIT_ID ? await api('updateCard', { withLive: true,
         id: EDIT_ID,
         title: state.title.trim(),
         description: state.description,
@@ -664,7 +665,7 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
         coverFileId: state.cover && state.cover.kind === 'upload' ? state.cover.fileId : '',
         removeCover: !state.cover && !!(original && original.cover),
         files: filesPayload,
-      }) : await api('createCard', {
+      }) : await api('createCard', { withLive: true,
         title: state.title.trim(),
         description: state.description,
         link: state.link.trim(),
@@ -676,6 +677,7 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
         files: filesPayload,
       });
 
+      if (r.live) store.set('library:live', JSON.stringify({ ts: Date.now(), data: r.live }));
       const num = pad3(r.card.id);
       const link = `${BASE}c/${num}/`;
       if (EDIT_ID) {
