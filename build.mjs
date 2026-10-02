@@ -211,6 +211,7 @@ const icon = {
   down: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
   plus: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5"/></svg>',
+  pencil: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/></svg>',
   ext: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"/></svg>',
 };
 
@@ -269,7 +270,7 @@ ${hasList ? sheetMarkup() : ''}
 function colRow(c, { active, compact = false } = {}) {
   const sub = !!c.parentCol;
   const isActive = active === c.id;
-  return `<a class="crow${sub ? ' crow--sub' : ''}${isActive ? ' is-active' : ''}" href="${href(`col/${c.id}/`)}"${isActive ? ' aria-current="page"' : ''}>
+  return `<a class="crow${sub ? ' crow--sub' : ''}${isActive ? ' is-active' : ''}" href="${href(`col/${c.id}/`)}" data-col="${esc(c.id)}"${isActive ? ' aria-current="page"' : ''}>
 <span class="crow-num">${c.num}</span><span class="crow-name">${esc(c.name)}</span><span class="crow-count">${c.cards.length}</span>
 </a>`;
 }
@@ -373,12 +374,15 @@ function collectionPage(c, model) {
   const chips = subs && c.cards.length
     ? `<div class="chips" role="group" aria-label="Подколлекции">
 <button class="chip" type="button" data-filter="" aria-pressed="true">Все <span class="chip-n">${c.cards.length}</span></button>
-${c.children.map((k) => `<button class="chip" type="button" data-filter="${esc(k.id)}" aria-pressed="false"><span class="chip-n">${k.num}</span> ${esc(k.name)} <span class="chip-n">${k.cards.length}</span></button>`).join('\n')}
+${c.children.map((k) => `<button class="chip" type="button" data-filter="${esc(k.id)}" aria-pressed="false"><span class="chip-n">${k.num}</span> <span class="chip-name" data-col-name="${esc(k.id)}">${esc(k.name)}</span> <span class="chip-n">${k.cards.length}</span></button>`).join('\n')}
 </div>`
     : '';
   const body = `<section class="hero hero--col">
 <p class="crumbs">${crumbs}</p>
-<h1 class="hero-title">${esc(c.name)}</h1>
+<div class="title-row">
+<h1 class="hero-title" data-title-text data-col-name="${esc(c.id)}">${esc(c.name)}</h1>
+<button class="icon-btn" type="button" data-rename="collection" data-id="${esc(c.id)}" data-admin hidden aria-label="Переименовать коллекцию">${icon.pencil}</button>
+</div>
 ${c.description ? `<p class="lede">${esc(c.description)}</p>` : ''}
 <p class="meta">${esc(meta)}</p>
 </section>
@@ -422,7 +426,10 @@ function cardArticle(card, model) {
 
   return `<article class="card" data-num="${card.num}" data-id="${card.id}" data-title="${esc(card.title)}">
 <figure class="card-cover${cover ? '' : ' card-cover--empty'}">${cover}</figure>
-<h1 class="card-title">${esc(card.title)}</h1>
+<div class="title-row card-title-row">
+<h1 class="card-title" data-title-text>${esc(card.title)}</h1>
+<button class="icon-btn" type="button" data-rename="card" data-id="${card.id}" data-admin hidden aria-label="Переименовать карточку">${icon.pencil}</button>
+</div>
 ${facts.length ? `<dl class="facts">${facts.map(([k, v]) => `<div class="fact"><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` : ''}
 ${card.description ? `<section class="card-desc"><h2 class="section-label">Описание</h2>${richText(card.description)}</section>` : ''}
 ${files.length ? `<section class="card-files"><div class="bar"><h2 class="bar-label">Файлы</h2><span>${String(files.length).padStart(2, '0')}</span></div>${files.join('\n')}</section>` : ''}

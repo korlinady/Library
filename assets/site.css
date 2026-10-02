@@ -496,3 +496,32 @@ body.sheet-open .sheet { transform: none; }
 /* Фильтр по тегу в строке поиска */
 .searchbar { display: flex; align-items: center; }
 .searchbar input { flex: 1; }
+
+/* ───────── Переименование ───────── */
+
+.title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.title-row > h1 { min-width: 0; }
+.hero .title-row { margin-right: -12px; }
+.hero .title-row .icon-btn { margin-top: 4px; }
+.card-title-row { padding: 24px 8px 20px var(--pad); }
+.card-title-row .card-title { padding: 0; }
+.card-title-row .icon-btn { margin-top: -6px; }
+
+.rename-form { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.rename-input {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 12px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.rename-input:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+.rename-btns { display: flex; align-items: center; gap: 16px; }
+.rename-save { min-height: 44px; padding: 0 18px; background: var(--ink); color: var(--bg); font-size: 15px; }
+.rename-save:disabled { opacity: 0.45; }
+.rename-cancel { min-height: 44px; font-size: 14px; text-decoration: underline; text-underline-offset: 4px; }

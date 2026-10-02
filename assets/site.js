@@ -14,8 +14,70 @@
   let closeSheet = null;
 
   // ───────── Режим админа: ключ уже введён в форме на этом устройстве ─────────
-  const adminKey = store.get(KEY_STORE);
-  if (adminKey) $$('[data-admin]').forEach((el) => { el.hidden = false; });
+  let adminKey = store.get(KEY_STORE);
+  const showAdmin = (root = document) => {
+    if (adminKey) $$('[data-admin]', root).forEach((el) => { el.hidden = false; });
+  };
+  showAdmin();
+
+  async function api(action, payload) {
+    let res;
+    try {
+      res = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(Object.assign({ key: adminKey, action }, payload)),
+      });
+    } catch {
+      throw new Error('Нет связи со скриптом. Проверь интернет.');
+    }
+    let data;
+    try { data = await res.json(); } catch { throw new Error('Скрипт ответил не так, как ожидалось.'); }
+    if (!data.ok) {
+      if (data.error === 'unauthorized') {
+        adminKey = null;
+        store.del(KEY_STORE);
+        $$('[data-admin]').forEach((el) => { el.hidden = true; });
+        throw new Error('Ключ не подходит. Войди заново в форме /admin.');
+      }
+      throw new Error(data.error || 'Неизвестная ошибка.');
+    }
+    return data;
+  }
+
+  // Переименования показываем сразу, пока сайт не пересобрался (15 минут)
+  const RENAMES_STORE = 'library:renames';
+  function readRenames() {
+    try {
+      const d = JSON.parse(store.get(RENAMES_STORE) || '{}');
+      const now = Date.now();
+      for (const k in d) if (now - d[k].ts > 15 * 60 * 1000) delete d[k];
+      return d;
+    } catch { return {}; }
+  }
+  const renames = readRenames();
+  store.set(RENAMES_STORE, JSON.stringify(renames));
+
+  function applyRename(kind, id, name, root = document) {
+    if (kind === 'card') {
+      $$(`a.tile[data-id="${CSS.escape(String(id))}"] .tile-title`, root).forEach((el) => { el.textContent = name; });
+      $$(`article.card[data-id="${CSS.escape(String(id))}"]`, root).forEach((a) => {
+        a.dataset.title = name;
+        const h = $('[data-title-text]', a);
+        if (h) h.textContent = name;
+      });
+    } else {
+      $$(`[data-col="${CSS.escape(id)}"] .crow-name`, root).forEach((el) => { el.textContent = name; });
+      $$(`[data-col-name="${CSS.escape(id)}"]`, root).forEach((el) => { el.textContent = name; });
+    }
+  }
+  function applyAllRenames(root = document) {
+    for (const k in renames) {
+      const i = k.indexOf(':');
+      applyRename(k.slice(0, i), k.slice(i + 1), renames[k].name, root);
+    }
+  }
+  applyAllRenames();
 
   // Удалённые карточки прячем сразу, не дожидаясь пересборки сайта (15 минут)
   function readDeleted() {
@@ -166,19 +228,7 @@
     if (!ok) return;
     btn.disabled = true;
     try {
-      const res = await fetch(SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ key: adminKey, action: 'deleteCard', id: Number(id) }),
-      });
-      const data = await res.json();
-      if (!data.ok) {
-        if (data.error === 'unauthorized') {
-          store.del && store.del(KEY_STORE);
-          throw new Error('Ключ не подходит. Войди заново в форме /admin.');
-        }
-        throw new Error(data.error);
-      }
+      await api('deleteCard', { id: Number(id) });
       deleted[id] = Date.now();
       store.set(DELETED_STORE, JSON.stringify(deleted));
       if (btn.closest('[data-sheet]')) {
@@ -189,10 +239,76 @@
         location.href = BASE;
       }
     } catch (err) {
-      say(err.message && !/fetch/i.test(err.message) ? err.message : 'Не получилось удалить: нет связи со скриптом');
+      say(err.message);
     } finally {
       btn.disabled = false;
     }
+  });
+
+  // ───────── Переименование ─────────
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-rename]');
+    if (!btn || !adminKey) return;
+    const row = btn.closest('.title-row');
+    if (!row || $('.rename-form', row)) return;
+    const heading = $('[data-title-text]', row);
+    const kind = btn.dataset.rename;
+    const id = btn.dataset.id;
+    const old = heading.textContent;
+
+    const form = document.createElement('form');
+    form.className = 'rename-form';
+    const label = document.createElement('label');
+    label.className = 'sr-only';
+    label.textContent = kind === 'card' ? 'Новое название карточки' : 'Новое название коллекции';
+    const input = document.createElement('input');
+    input.className = 'rename-input';
+    input.type = 'text';
+    input.value = old;
+    input.maxLength = kind === 'card' ? 200 : 120;
+    input.id = 'rename-' + Date.now();
+    label.htmlFor = input.id;
+    const btns = document.createElement('div');
+    btns.className = 'rename-btns';
+    btns.innerHTML = '<button class="rename-save" type="submit">Сохранить</button><button class="rename-cancel" type="button">Отмена</button>';
+    form.append(label, input, btns);
+
+    heading.hidden = true;
+    btn.hidden = true;
+    row.prepend(form);
+    input.focus();
+    input.select();
+
+    const finish = () => {
+      form.remove();
+      heading.hidden = false;
+      btn.hidden = false;
+      btn.focus({ preventScroll: true });
+    };
+    $('.rename-cancel', form).addEventListener('click', finish);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { ev.stopPropagation(); finish(); }
+    });
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const name = input.value.trim();
+      if (!name) { say('Название не может быть пустым'); return; }
+      if (name === old) { finish(); return; }
+      const save = $('.rename-save', form);
+      save.disabled = true;
+      try {
+        if (kind === 'card') await api('renameCard', { id: Number(id), title: name });
+        else await api('renameCollection', { id, name });
+        renames[`${kind}:${id}`] = { name, ts: Date.now() };
+        store.set(RENAMES_STORE, JSON.stringify(renames));
+        applyRename(kind, id, name);
+        finish();
+        say('Переименовано. Сайт обновится через 1–2 минуты');
+      } catch (err) {
+        save.disabled = false;
+        say(err.message);
+      }
+    });
   });
 
   // ───────── Шторка с карточкой ─────────
@@ -232,6 +348,8 @@
     const h = $('h1', article);
     if (h) h.id = 'sheet-title';
     body.replaceChildren(article);
+    showAdmin(article);
+    applyAllRenames(article);
     num.textContent = '№ ' + (article.dataset.num || '');
     copyBtn.dataset.copy = url;
     document.title = data.title;
