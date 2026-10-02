@@ -26,11 +26,29 @@ async function loadData() {
   if (process.env.DATA_FILE) {
     return JSON.parse(await fs.readFile(process.env.DATA_FILE, 'utf8'));
   }
-  const res = await fetch(config.exportUrl, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`Экспорт ответил ${res.status}`);
-  const data = await res.json();
-  if (!data.ok) throw new Error(`Экспорт вернул ошибку: ${data.error}`);
-  return data;
+  // Apps Script иногда отвечает ошибкой на один запрос, особенно сразу после
+  // того, как сам запустил сборку. Поэтому несколько попыток с паузами.
+  const delays = [0, 10, 30, 60];
+  let lastError;
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i]) {
+      console.log(`Повтор через ${delays[i]} с…`);
+      await new Promise((r) => setTimeout(r, delays[i] * 1000));
+    }
+    try {
+      const res = await fetch(config.exportUrl, { redirect: 'follow', signal: AbortSignal.timeout(90_000) });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`Экспорт ответил ${res.status}: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
+      let data;
+      try { data = JSON.parse(text); } catch { throw new Error(`Экспорт вернул не JSON: ${text.replace(/\s+/g, ' ').slice(0, 300)}`); }
+      if (!data.ok) throw new Error(`Экспорт вернул ошибку: ${data.error}`);
+      return data;
+    } catch (err) {
+      lastError = err;
+      console.warn(`Попытка ${i + 1}: ${err.message}`);
+    }
+  }
+  throw lastError;
 }
 
 function buildModel(data) {
