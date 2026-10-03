@@ -240,6 +240,9 @@ ${description ? `<meta name="description" content="${esc(description)}">` : ''}
 ${og}
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="${href('favicon.svg')}" type="image/svg+xml">
+<link rel="icon" href="${href('icons/favicon-32.png')}" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="${href('icons/apple-touch-icon.png')}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
@@ -505,6 +508,8 @@ function adminPage() {
 <meta name="robots" content="noindex, nofollow">
 <title>Новая карточка — ${esc(TITLE)}</title>
 <link rel="manifest" href="${href('manifest.webmanifest')}">
+<link rel="icon" href="${href('favicon.svg')}" type="image/svg+xml">
+<link rel="icon" href="${href('icons/favicon-32.png')}" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="${href('icons/apple-touch-icon.png')}">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -703,6 +708,18 @@ async function writeAppAssets() {
 </svg>`;
   const dir = path.join(OUT, 'icons');
   await fs.mkdir(dir, { recursive: true });
+
+  // Значок вкладки: та же каталожная карточка, упрощённая для 16–32 px.
+  // В тёмной теме браузера цвета меняются местами, чтобы значок не терялся.
+  const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<style>.bg{fill:#0a0a0a}.fg{fill:#ffffff}@media (prefers-color-scheme: dark){.bg{fill:#f2f2f2}.fg{fill:#0a0a0a}}</style>
+<rect class="bg" width="32" height="32"/>
+<rect class="fg" x="6" y="8" width="20" height="16"/>
+<rect class="bg" x="6" y="13" width="20" height="2"/>
+</svg>`;
+  await write('favicon.svg', favicon);
+  await sharp(Buffer.from(favicon)).resize(32, 32).png().toFile(path.join(dir, 'favicon-32.png'));
+
   const src = Buffer.from(svg);
   await sharp(src).resize(512, 512).png().toFile(path.join(dir, 'icon-512.png'));
   await sharp(src).resize(192, 192).png().toFile(path.join(dir, 'icon-192.png'));
