@@ -248,3 +248,34 @@ select.input {
   background: var(--bg);
   border-top: 1px solid var(--ink);
 }
+
+/* Подсказки тегов */
+.tag-field { position: relative; }
+.tag-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 290px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--ink);
+  border-top: 0;
+}
+.tag-opt {
+  min-height: 44px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--soft);
+  cursor: pointer;
+}
+.tag-opt:last-child { border-bottom: 0; }
+.tag-opt:hover, .tag-opt[aria-selected="true"] { background: var(--ph); }
+.tag-count { font-family: var(--mono); font-size: 11px; color: var(--mute); }

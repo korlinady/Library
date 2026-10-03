@@ -638,7 +638,11 @@ function adminPage() {
 
 <div class="field">
 <label class="field-label" for="f-tags">Теги</label>
-<input class="input" id="f-tags" type="text" placeholder="Через запятую" data-field="tags" autocomplete="off">
+<div class="tag-field">
+<input class="input" id="f-tags" type="text" placeholder="Начни печатать или выбери из списка" data-field="tags" autocomplete="off" autocapitalize="none" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="tag-list">
+<ul class="tag-list" id="tag-list" role="listbox" aria-label="Существующие теги" hidden></ul>
+</div>
+<span class="hint">Через запятую. Новые теги — просто впиши</span>
 </div>
 
 <label class="check check--big"><input type="checkbox" data-field="star"> В избранное</label>

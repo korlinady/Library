@@ -160,6 +160,7 @@
     let shown = false;
     const live = readLive();
     if (live) {
+      setTagPool(tagsFromLive(live));
       setCollections(colsFromLive(live));
       const c = EDIT_ID ? cardFromLive(live, EDIT_ID) : null;
       if (c) fillCard(c);
@@ -174,6 +175,7 @@
     // 2. Тихо сверяемся со свежими данными
     try {
       const r = await fetchFresh();
+      if (r.tags) setTagPool(r.tags);
       setCollections(r.collections || []);
       if (EDIT_ID) {
         if (!r.card) throw new Error('Карточка не найдена — возможно, её удалили.');
@@ -759,6 +761,131 @@ ${f.status === 'uploading' ? '<span class="progress" aria-hidden="true"></span>'
 </div>`;
     }).join('');
   }
+
+  // ───────── Теги: подсказки ─────────
+
+  let tagPool = []; // [{ tag, count }]
+  function setTagPool(list) {
+    const m = new Map();
+    for (const { tag, count } of list) {
+      const k = String(tag).toLowerCase();
+      const e = m.get(k);
+      if (e) e.count = Math.max(e.count, count);
+      else m.set(k, { tag: String(tag), count: Number(count) || 0 });
+    }
+    tagPool = [...m.values()];
+  }
+  function tagsFromLive(d) {
+    const m = new Map();
+    d.public.cards.concat(d.hidden.cards).forEach((c) => (c.tags || []).forEach((t) => {
+      const k = t.toLowerCase();
+      const e = m.get(k) || { tag: t, count: 0 };
+      e.count++;
+      m.set(k, e);
+    }));
+    return [...m.values()];
+  }
+  // Тот же расчёт цвета, что на сайте
+  function tagTone(tag) {
+    let h = 0;
+    for (const ch of String(tag).toLowerCase()) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return h % 8;
+  }
+
+  const tagInput = $('#f-tags');
+  const tagList = $('#tag-list');
+  let tagItems = [];
+  let tagActive = -1;
+
+  // Тег, который сейчас печатается: между запятыми вокруг курсора
+  function currentToken() {
+    const v = tagInput.value;
+    const pos = tagInput.selectionStart ?? v.length;
+    const start = v.lastIndexOf(',', pos - 1) + 1;
+    let end = v.indexOf(',', pos);
+    if (end === -1) end = v.length;
+    return { start, end, text: v.slice(start, end).trim() };
+  }
+
+  function closeTags() {
+    tagList.hidden = true;
+    tagInput.setAttribute('aria-expanded', 'false');
+    tagInput.removeAttribute('aria-activedescendant');
+    tagActive = -1;
+  }
+
+  function renderTagList() {
+    const tok = currentToken();
+    const q = tok.text.toLowerCase();
+    const others = new Set(tagInput.value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean));
+    others.delete(q);
+    tagItems = tagPool
+      .filter((t) => {
+        const k = t.tag.toLowerCase();
+        return !others.has(k) && k !== q && (!q || k.includes(q));
+      })
+      .sort((a, b) => {
+        const as = q && a.tag.toLowerCase().startsWith(q) ? 0 : 1;
+        const bs = q && b.tag.toLowerCase().startsWith(q) ? 0 : 1;
+        return (as - bs) || (b.count - a.count) || a.tag.localeCompare(b.tag, 'ru');
+      })
+      .slice(0, 8);
+    if (!tagItems.length || document.activeElement !== tagInput) { closeTags(); return; }
+    tagActive = Math.min(tagActive, tagItems.length - 1);
+    tagList.innerHTML = tagItems.map((t, i) => `<li class="tag-opt" role="option" id="tag-opt-${i}" data-i="${i}" aria-selected="${i === tagActive}">
+<span class="tag tag--${tagTone(t.tag)}">${esc(t.tag)}</span><span class="tag-count">${t.count}</span></li>`).join('');
+    tagList.hidden = false;
+    tagInput.setAttribute('aria-expanded', 'true');
+    if (tagActive >= 0) tagInput.setAttribute('aria-activedescendant', `tag-opt-${tagActive}`);
+    else tagInput.removeAttribute('aria-activedescendant');
+  }
+
+  function chooseTag(tag) {
+    const tok = currentToken();
+    const v = tagInput.value;
+    const before = v.slice(0, tok.start).replace(/\s*$/, '');
+    const after = v.slice(tok.end).replace(/^\s*,?\s*/, '');
+    const head = (before ? before + ' ' : '') + tag + ', ';
+    tagInput.value = head + after;
+    tagInput.setSelectionRange(head.length, head.length);
+    tagActive = -1;
+    tagInput.dispatchEvent(new Event('input', { bubbles: true }));
+    tagInput.focus();
+  }
+
+  tagInput.addEventListener('input', renderTagList);
+  tagInput.addEventListener('focus', () => {
+    renderTagList();
+    // На телефоне клавиатура закрывает низ экрана — поднимем поле, чтобы список был виден
+    if (window.innerWidth < 600) setTimeout(() => tagInput.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+  });
+  tagInput.addEventListener('click', renderTagList);
+  tagInput.addEventListener('blur', () => setTimeout(closeTags, 150));
+  tagInput.addEventListener('keydown', (e) => {
+    const open = !tagList.hidden;
+    if (e.key === 'ArrowDown' && open) {
+      e.preventDefault();
+      tagActive = (tagActive + 1) % tagItems.length;
+      renderTagList();
+    } else if (e.key === 'ArrowUp' && open) {
+      e.preventDefault();
+      tagActive = tagActive <= 0 ? tagItems.length - 1 : tagActive - 1;
+      renderTagList();
+    } else if (e.key === 'Enter') {
+      e.preventDefault(); // Enter в тегах не должен публиковать карточку
+      if (open && tagActive >= 0) chooseTag(tagItems[tagActive].tag);
+      else closeTags();
+    } else if (e.key === 'Escape' && open) {
+      e.stopPropagation();
+      closeTags();
+    }
+  });
+  // Не теряем фокус поля при нажатии на подсказку
+  tagList.addEventListener('pointerdown', (e) => e.preventDefault());
+  tagList.addEventListener('click', (e) => {
+    const li = e.target.closest('[data-i]');
+    if (li) chooseTag(tagItems[Number(li.dataset.i)].tag);
+  });
 
   // ───────── Публикация ─────────
 
